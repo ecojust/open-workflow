@@ -1,5 +1,5 @@
 import type { ElementStyle, Point, Scene, SceneElement, ShapeElement } from './types.ts'
-import { edgePoints, pathMidpoint, pointsPath, sceneBounds, shapeOutline } from './geometry.ts'
+import { edgePoints, pathMidpoint, pointsPath, sceneBounds, shapeOutline, isBraceShape, bracePath, braceTextBounds } from './geometry.ts'
 import { anchoredPolygon, sketchEllipse, sketchPolyline } from './sketch.ts'
 import { resolveStrokePattern } from './appearance.ts'
 
@@ -57,6 +57,7 @@ export function wrapText(text: string, width: number, fontSize: number): string[
 }
 function textMarkup(node: ShapeElement): string {
   if (!node.text || node.shape === 'image') return ''
+  if (isBraceShape(node.shape)) return textMarkup({ ...node, ...braceTextBounds(node), shape: 'text' })
   const fontSize = Math.max(1, Math.min(500, node.style.fontSize)), lineHeight = fontSize * 1.35
   const innerWidth = node.shape === 'diamond' ? node.width * .58 : node.shape === 'star' ? node.width * .46 : node.shape === 'triangle' ? node.width * .56 : ['cloud', 'parallelogram', 'hexagon'].includes(node.shape) ? node.width * .7 : node.width - 20
   const maxLines = node.shape === 'frame' ? 1 : Math.max(1, Math.floor((node.height - 12) / lineHeight))
@@ -66,6 +67,13 @@ function textMarkup(node: ShapeElement): string {
   const y = node.shape === 'frame' ? node.y + Math.min(node.height, Math.max(28, fontSize * 1.5 + 12)) / 2 : node.y + node.height / 2 - (lines.length - 1) * lineHeight / 2
   const textColor = ['transparent', 'none'].includes(node.style.stroke.toLowerCase()) ? '#334155' : node.style.stroke
   return `<text fill="${color(textColor)}" opacity="${node.style.opacity}" font-family="Inter, 'Noto Sans SC', system-ui, sans-serif" font-size="${fontSize}" text-anchor="${align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle'}" dominant-baseline="central" pointer-events="none">${lines.map((line, i) => `<tspan x="${x}" y="${y + i * lineHeight}">${escapeXml(line)}</tspan>`).join('')}</text>`
+}
+function braceLabelHitBounds(node: ShapeElement): ReturnType<typeof braceTextBounds> {
+  const bounds = braceTextBounds(node), fontSize = Math.max(1, Math.min(500, node.style.fontSize)), lineHeight = fontSize * 1.35
+  const lines = wrapText(node.text, bounds.width - 20, fontSize).slice(0, Math.max(1, Math.floor((bounds.height - 12) / lineHeight)))
+  const width = Math.min(bounds.width, Math.max(8, ...lines.map(line => [...line].reduce((sum, char) => sum + (/[^\x00-\x7F]/.test(char) ? 1 : .57) * fontSize, 8))))
+  const height = Math.min(bounds.height, Math.max(lineHeight, lines.length * lineHeight))
+  return { x: node.style.textAlign === 'left' ? bounds.x + 8 : node.style.textAlign === 'right' ? bounds.x + bounds.width - width - 6 : bounds.x + (bounds.width - width) / 2, y: bounds.y + (bounds.height - height) / 2, width, height }
 }
 function arrowMarkup(at: Point, previous: Point, style: ElementStyle, id: string, hitTargets: boolean): string {
   const angle = Math.atan2(at.y - previous.y, at.x - previous.x), size = Math.max(8, style.strokeWidth * 3.5)
@@ -92,7 +100,15 @@ export function elementToSvg(element: SceneElement, scene: Scene, hitTargets = f
   }
   const { x, y, width: w, height: h, shape } = element, attrs = styleAttrs(element.style)
   let markup = ''
-  if (shape === 'frame') {
+  if (isBraceShape(shape)) {
+    const path = bracePath(element)
+    if (hitTargets) {
+      markup = `<path data-brace-hit="true" d="${path}" fill="none" stroke="transparent" stroke-width="${Math.max(16, element.style.strokeWidth)}" pointer-events="stroke"/>`
+      if (element.text) { const bounds = braceLabelHitBounds(element); markup += `<rect data-brace-label-hit="true" x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="transparent" stroke="none" pointer-events="all"/>` }
+    }
+    markup += isSketch(element.style) ? sketchMarkup(sketchPolyline(anchoredPolygon(shapeOutline(element), boundAnchors(element, scene), false), element.id, element.style.strokeWidth), element.style) : `<path d="${path}" ${styleAttrs(element.style, 'none')}/>`
+  }
+  else if (shape === 'frame') {
     const headerHeight = Math.min(h, Math.max(28, element.style.fontSize * 1.5 + 12))
     markup = isSketch(element.style) ? sketchShape(element, scene, hitTargets) : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" ${styleAttrs(element.style, 'none')}/>`
     if (hitTargets) markup += `<rect x="${x}" y="${y}" width="${w}" height="${headerHeight}" fill="transparent" pointer-events="all"/>`

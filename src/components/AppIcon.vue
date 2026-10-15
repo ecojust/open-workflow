@@ -1,6 +1,14 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 })
 const paths: Record<string, string> = {
+  canvas: 'M4 4h16v16H4zM8 4v2m8-2v2M4 8h2m12 0h2M4 16h2m12 0h2M8 18v2m8-2v2',
+  'brace-left': 'M16 3h-2c-3 0-3 2-3 4v1c0 2-1 3-4 4 3 1 4 2 4 4v1c0 2 0 4 3 4h2',
+  'brace-right': 'M8 3h2c3 0 3 2 3 4v1c0 2 1 3 4 4-3 1-4 2-4 4v1c0 2 0 4-3 4H8',
+  'brace-top': 'M3 16v-2c0-3 2-3 4-3h1c2 0 3-1 4-4 1 3 2 4 4 4h1c2 0 4 0 4 3v2',
+  'brace-bottom': 'M3 8v2c0 3 2 3 4 3h1c2 0 3 1 4 4 1-3 2-4 4-4h1c2 0 4 0 4-3V8',
+  'edge-straight': 'M4 18 20 6', 'edge-orthogonal': 'M4 18h7V6h9',
+  'arrow-none': 'M4 12h16', 'arrow-end': 'M4 12h16m-5-5 5 5-5 5', 'arrow-both': 'M4 12h16M9 7l-5 5 5 5m6-10 5 5-5 5',
+  'auto-layout': 'M9 3h6v5H9zM3 16h6v5H3zM15 16h6v5h-6zM12 8v4M6 16v-4h12v4M3 2v4M1 4h4',
   'grid-dots': 'M5 5h.01M12 5h.01M19 5h.01M5 12h.01M12 12h.01M19 12h.01M5 19h.01M12 19h.01M19 19h.01',
   triangle: 'm12 3 10 18H2z', hexagon: 'm7 3 10 0 5 9-5 9H7l-5-9z', star: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z', parallelogram: 'M7 4h15l-5 16H2z',
   cylinder: 'M3 6c0-4 18-4 18 0s-18 4-18 0v12c0 4 18 4 18 0V6', cloud: 'M6 18a4 4 0 1 1-.5-8A6 6 0 0 1 17 7a5.5 5.5 0 0 1 1 11z',

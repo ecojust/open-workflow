@@ -29,9 +29,10 @@ export function sketchPolyline(points: Point[], seed: string, width: number, clo
 }
 
 /** Insert attached edge endpoints into a polygon, so both sketch passes meet the edge. */
-export function anchoredPolygon(vertices: Point[], anchors: Point[]): Point[] {
+export function anchoredPolygon(vertices: Point[], anchors: Point[], closed = true): Point[] {
   const result: Point[] = []
   for (let index = 0; index < vertices.length; index++) {
+    if (!closed && index === vertices.length - 1) { result.push(vertices[index]!); break }
     const start = vertices[index]!, end = vertices[(index + 1) % vertices.length]!, dx = end.x - start.x, dy = end.y - start.y, squared = dx * dx + dy * dy
     result.push(start)
     if (!squared) continue

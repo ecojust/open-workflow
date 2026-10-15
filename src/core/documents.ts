@@ -5,7 +5,7 @@ import { normalizeDiagramStyle } from './diagram-appearance.ts'
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 const MAX_ELEMENTS = 5000
-const SHAPES = ['rectangle', 'ellipse', 'diamond', 'note', 'text', 'image', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame'] as const
+const SHAPES = ['rectangle', 'ellipse', 'diamond', 'note', 'text', 'image', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame', 'brace-left', 'brace-right', 'brace-top', 'brace-bottom'] as const
 function object(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('文件内容应为一个对象。')
   return value as Record<string, any>
@@ -56,6 +56,7 @@ export function validateScene(value: unknown): Scene {
     const base = { id, style: validateElementStyle(e.style), locked: e.locked === true, ...(e.groupId ? { groupId: string(e.groupId, '组合 ID', 512) } : {}) }
     if (e.type === 'shape') {
       const shape = choice(e.shape, SHAPES, '图形')
+      if (shape.startsWith('brace-')) base.style.fill = 'none'
       if (shape === 'image' && !safeImage(e.imageData)) throw new Error('图片必须是内嵌 PNG、JPEG 或 WebP（不超过 10 MB）。')
       return { ...base, type: 'shape', shape, x: number(e.x, 'X'), y: number(e.y, 'Y'), width: number(e.width, '宽度', 1, 100000), height: number(e.height, '高度', 1, 100000), text: string(e.text ?? '', '文本'), ...(e.imageData && shape === 'image' ? { imageData: e.imageData } : {}) }
     }
@@ -135,7 +136,7 @@ export const CODE_DIAGRAM_SAMPLE = `flowchart TD
 export function createDocument(kind: DocumentKind, template = false): WorkflowDocument {
   const time = new Date().toISOString()
   const doc: WorkflowDocument = {
-    format: 'open-workflow', version: 1, id: newId('doc'), title: kind === 'flow' ? '未命名流程图' : kind === 'board' ? '未命名白板' : '未命名代码图表',
+    format: 'open-workflow', version: 1, id: newId('doc'), title: kind === 'mermaid' ? '未命名代码图表' : '未命名画布',
     kind, scene: emptyScene(), source: kind === 'mermaid' ? CODE_DIAGRAM_SAMPLE : '', diagramStyle: 'classic', createdAt: time, updatedAt: time,
   }
   if (template && kind === 'flow') {

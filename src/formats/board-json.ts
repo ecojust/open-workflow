@@ -1,5 +1,5 @@
 import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, type Scene, type SceneElement, type ShapeElement } from '../core/types.ts'
-import { edgePoints, elementBounds } from '../core/geometry.ts'
+import { edgePoints, elementBounds, isBraceShape, shapeOutline, braceTextBounds } from '../core/geometry.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
 import { validateElementStyle } from '../core/documents.ts'
 
@@ -87,16 +87,25 @@ export function importBoardJson(text: string): ImportedScene {
     const kind = element.type
     const supported = ['rectangle', 'ellipse', 'diamond', 'text', 'arrow', 'line', 'freedraw', 'image', 'stickynote', 'frame']
     if (typeof kind !== 'string' || !supported.includes(kind)) { warnings.add(`元素类型“${typeof kind === 'string' ? kind.slice(0, 80) : '未知'}”暂不支持，已跳过。`); continue }
+    const native = isObject(element.customData) && isObject(element.customData.openWorkflow) ? element.customData.openWorkflow : undefined
+    if (kind === 'text' && typeof native?.braceLabelFor === 'string') {
+      const parent = sourceMap.get(native.braceLabelFor), parentData = isObject(parent?.customData) && isObject(parent.customData.openWorkflow) ? parent.customData.openWorkflow : undefined
+      if (isBraceShape(parentData?.shape) && parentData?.type === 'brace') { pendingLabels.push({ ...element, containerId: native.braceLabelFor, nativeBraceLabel: true }); continue }
+    }
     if (kind === 'text' && typeof element.containerId === 'string') {
       const parent = sourceMap.get(element.containerId)
       if (parent && ['rectangle', 'ellipse', 'diamond', 'stickynote', 'image', 'arrow', 'line', 'frame'].includes(String(parent.type))) { pendingLabels.push(element); continue }
     }
     const style = styleOf(element, warnings)
     const locked = element.locked === true
-    const native = isObject(element.customData) && isObject(element.customData.openWorkflow) ? element.customData.openWorkflow : undefined
     const groupIds = Array.isArray(element.groupIds) ? element.groupIds.filter((id): id is string => typeof id === 'string' && !!id && id.length <= 512) : []
     let result: SceneElement
-    if (kind === 'freedraw' || native?.type === 'stroke') {
+    if (native?.type === 'brace' && isBraceShape(native.shape)) {
+      const bounds = isObject(native.bounds) ? native.bounds : element
+      style.fill = 'none'
+      result = { id, type: 'shape', shape: native.shape, x: finite(bounds.x), y: finite(bounds.y), width: Math.max(1, finite(bounds.width, 160)), height: Math.max(1, finite(bounds.height, 180)), text: safeText(native.text), style: { ...style, fontSize: Math.max(1, Math.min(500, finite(native.fontSize, DEFAULT_STYLE.fontSize))), textAlign: native.textAlign === 'left' || native.textAlign === 'right' ? native.textAlign : 'center' }, locked }
+      warnings.add('大括弧通过本软件元数据恢复；外部软件仅显示普通笔迹与独立文字，可能无法保留括弧编辑与绑定语义。')
+    } else if (kind === 'freedraw' || native?.type === 'stroke') {
       const pressures = element.pressures
       if (Array.isArray(pressures) && pressures.some(value => value !== pressures[0])) warnings.add('笔迹压感已简化为固定线宽。')
       const points = worldPoints(element, native?.closed === true ? 3 : 1, native?.closed === true ? 100001 : 100000)
@@ -135,7 +144,7 @@ export function importBoardJson(text: string): ImportedScene {
     if (!parent || parent.type === 'stroke') continue
     styleOf(label, warnings)
     const value = safeText(label.text)
-    if (parent.type === 'shape') parent.text = parent.text ? `${parent.text}\n${value}` : value
+    if (parent.type === 'shape') parent.text = label.nativeBraceLabel === true ? value : parent.text ? `${parent.text}\n${value}` : value
     else parent.label = parent.label ? `${parent.label}\n${value}` : value
     parent.style.fontSize = Math.max(1, Math.min(500, finite(label.fontSize, DEFAULT_STYLE.fontSize)))
     parent.style.textAlign = label.textAlign === 'left' || label.textAlign === 'right' ? label.textAlign : 'center'
@@ -171,6 +180,16 @@ export function exportBoardJson(scene: Scene): string {
   for (const element of scene.elements) {
     const result = base(element)
     if (element.type === 'shape') {
+      if (isBraceShape(element.shape)) {
+        const points = shapeOutline(element), bounds = elementBounds({ ...element, type: 'stroke', points })
+        Object.assign(result, { type: 'freedraw', x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, points: points.map(point => [point.x - bounds.x, point.y - bounds.y]), backgroundColor: 'transparent', pressures: [], simulatePressure: true, lastCommittedPoint: null, customData: { openWorkflow: { type: 'brace', shape: element.shape, bounds: { x: element.x, y: element.y, width: element.width, height: element.height }, text: element.text, fontSize: element.style.fontSize, textAlign: element.style.textAlign, compatibility: '外部软件显示为普通笔迹与独立文字；括弧编辑与绑定语义依赖本软件元数据' } } })
+        elements.push(result)
+        if (element.text) {
+          const label = braceTextBounds(element), id = labelId(element.id)
+          elements.push({ ...textElement(id, element.text, label.x, label.y, label.width, label.height, element, null), verticalAlign: 'middle', customData: { openWorkflow: { braceLabelFor: element.id } } })
+        }
+        continue
+      }
       if (element.shape === 'text') { elements.push(textElement(element.id, element.text, element.x, element.y, element.width, element.height, element, null)); continue }
       Object.assign(result, { type: ['rectangle', 'ellipse', 'diamond', 'image', 'frame'].includes(element.shape) ? element.shape : 'rectangle', x: element.x, y: element.y, width: element.width, height: element.height, boundElements: [...(bindings.get(element.id) || [])] })
       if (!['rectangle', 'ellipse', 'diamond', 'image', 'frame'].includes(element.shape)) result.customData = { openWorkflow: { shape: element.shape } }

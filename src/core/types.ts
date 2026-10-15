@@ -16,7 +16,7 @@ export interface ElementStyle {
 export interface ShapeElement {
   id: string
   type: 'shape'
-  shape: 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'image' | 'triangle' | 'hexagon' | 'star' | 'parallelogram' | 'cylinder' | 'cloud' | 'frame'
+  shape: 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'image' | 'triangle' | 'hexagon' | 'star' | 'parallelogram' | 'cylinder' | 'cloud' | 'frame' | 'brace-left' | 'brace-right' | 'brace-top' | 'brace-bottom'
   x: number
   y: number
   width: number

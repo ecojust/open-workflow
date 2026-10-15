@@ -14,7 +14,7 @@ test('history records transactions, undo branches discard obsolete redo', () => 
   doc.title = 'First'; history.commit(doc); history.commit(doc)
   doc.title = 'Second'; history.commit(doc)
   assert.equal(history.undo().title, 'First')
-  assert.equal(history.undo().title, '未命名流程图')
+  assert.equal(history.undo().title, '未命名画布')
   assert.equal(history.undo(), null)
   assert.equal(history.redo().title, 'First')
   doc.title = 'Branch'; history.commit(doc)

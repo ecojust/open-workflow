@@ -14,7 +14,7 @@ assert.ok(source, 'App.vue must expose its real setup script to this regression 
 const script = ts.transpileModule(source.replace(/^import[^\n]*\n/gm, ''), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText
-const exposed = 'tabs,activeId,home,recent,busy,modal,editor,toast,addDocument,activate,save,closeTab,nativeClose,unload,pageHide,persist,commit,dirty,historyAction,finishModal,openRecent'
+const exposed = 'tabs,activeId,home,recent,busy,modal,editor,toast,addDocument,activate,save,closeTab,nativeClose,unload,pageHide,persist,commit,dirty,historyAction,finishModal,openRecent,autoSaveEnabled,setAutoSave'
 
 function deferred() {
   let resolve, reject
@@ -28,7 +28,7 @@ async function settleUntil(predicate, description = 'expected asynchronous state
 function harness(options = {}) {
   const records = new Map((options.records || []).map(record => [record.id, clone(record)]))
   const local = new Map(Object.entries(options.local || {}))
-  const timers = new Map(), mounted = [], deleted = [], saved = [], downloads = []
+  const timers = new Map(), timerDelays = new Map(), mounted = [], deleted = [], saved = [], downloads = []
   let timerId = 0, closed = 0
   const fakeWindow = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {} }
   const environment = {
@@ -36,7 +36,7 @@ function harness(options = {}) {
     onMounted: callback => mounted.push(callback), onBeforeUnmount: () => {},
     window: fakeWindow, document: { activeElement: null },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value) },
-    setTimeout: callback => { timers.set(++timerId, callback); return timerId }, clearTimeout: id => timers.delete(id),
+    setTimeout: (callback, delay) => { timers.set(++timerId, callback); timerDelays.set(timerId, delay); return timerId }, clearTimeout: id => { timers.delete(id); timerDelays.delete(id) },
     isDesktop: () => Boolean(options.desktop),
     putDraft: async record => { if (options.beforePut) await options.beforePut(record); records.set(record.id, clone(record)) },
     readDrafts: async () => ({ records: [...records.values()].map(clone), skipped: 0 }),
@@ -47,7 +47,12 @@ function harness(options = {}) {
     downloadBytes: (...args) => downloads.push(args),
   }
   const app = Function(...Object.keys(environment), `${script}\nreturn {${exposed}}`)(...Object.values(environment))
-  return { app, records, local, deleted, saved, downloads, mounted, timers, closed: () => closed }
+  function runTimers(delay = 300) {
+    for (const [id, callback] of [...timers]) if (timerDelays.get(id) === delay) {
+      timers.delete(id); timerDelays.delete(id); callback()
+    }
+  }
+  return { app, records, local, deleted, saved, downloads, mounted, timers, runTimers, closed: () => closed }
 }
 function record(document, saved = false) { return { id: document.id, document: clone(document), savedKey: saved ? contentKey(document) : null, lastOpened: 100 } }
 
@@ -248,4 +253,151 @@ test('save requests do not take ownership of a different busy operation', async 
   assert.equal(await app.save(tab), false)
   assert.equal(downloads.length, 0)
   assert.equal(app.busy.value, '正在导出…')
+})
+
+test('automatic local drafts remain enabled by default without downloading a file', async () => {
+  const { app, records, downloads, runTimers } = harness()
+  const tab = app.addDocument(createDocument('flow'))
+  assert.equal(app.autoSaveEnabled.value, true)
+  app.commit(tab, document => { document.title = '默认自动草稿' }, '改名')
+  runTimers()
+  await settleUntil(() => records.get(tab.document.id)?.document.title === '默认自动草稿')
+  assert.equal(downloads.length, 0)
+  assert.equal(app.dirty(tab), true, 'A local draft does not mark the document saved to a file')
+})
+
+test('disabling automatic drafts cancels pending timers and page lifecycle cannot bypass the preference', async () => {
+  const { app, records, local, downloads, runTimers } = harness()
+  const tab = app.addDocument(createDocument('flow'))
+  app.commit(tab, document => { document.title = '尚未写入的草稿' }, '改名')
+  await app.setAutoSave(false)
+  assert.equal(local.get('ow-autosave'), 'false')
+  app.commit(tab, document => { document.title = '关闭后的修改' }, '改名')
+  let warnings = 0
+  app.unload({ preventDefault() { warnings++ }, returnValue: null })
+  app.pageHide()
+  runTimers()
+  for (let turn = 0; turn < 20; turn++) await Promise.resolve()
+  assert.equal(records.size, 0)
+  assert.equal(downloads.length, 0)
+  assert.equal(tab.draftState, 'paused')
+  assert.equal(warnings, 1, 'Unsaved-file protection remains active when local drafts are paused')
+})
+
+test('disabling automatic drafts skips an automatic write queued behind unfinished IO', async () => {
+  const gate = deferred()
+  let writes = 0
+  const { app, records } = harness({ beforePut: () => ++writes === 1 ? gate.promise : undefined })
+  const tab = app.addDocument(createDocument('flow'))
+  app.commit(tab, document => { document.title = '已经开始保存' }, '改名')
+  const first = app.persist(tab, true)
+  await settleUntil(() => writes === 1)
+  app.commit(tab, document => { document.title = '排队等待的自动草稿' }, '改名')
+  const queued = app.persist(tab, true)
+  await app.setAutoSave(false)
+  gate.resolve(); await Promise.all([first, queued])
+  assert.equal(writes, 1, 'Already-started IO completes, but the queued automatic write never starts')
+  assert.equal(records.get(tab.document.id).document.title, '已经开始保存')
+  assert.equal(tab.document.title, '排队等待的自动草稿')
+  assert.equal(tab.draftState, 'paused')
+  assert.ok(tab.draftRevision < tab.revision)
+})
+
+test('re-enabling drafts flushes the current editor and persists every open tab without file saves', async () => {
+  const { app, records, downloads, saved, runTimers } = harness()
+  await app.setAutoSave(false)
+  const first = app.addDocument(createDocument('flow')), second = app.addDocument(createDocument('mermaid'))
+  app.commit(first, document => { document.title = '后台画布的最新修改' }, '改名')
+  let flushes = 0
+  app.editor.value = { flush() { flushes++; app.commit(second, document => { document.source = 'flowchart LR\n A[重新开启时提交的文字]' }, '修改源码') } }
+  await app.setAutoSave(true)
+  runTimers()
+  await settleUntil(() => records.size === 2 && app.tabs.value.every(tab => tab.draftRevision === tab.revision))
+  assert.ok(flushes >= 1)
+  assert.equal(records.get(first.document.id).document.title, '后台画布的最新修改')
+  assert.match(records.get(second.document.id).document.source, /重新开启时提交的文字/)
+  assert.equal(downloads.length, 0)
+  assert.equal(saved.length, 0)
+  assert.ok(app.tabs.value.every(tab => tab.draftRevision === tab.revision))
+})
+
+test('an off-on cycle cannot revive a stale automatic snapshot that was already queued', async () => {
+  const gate = deferred()
+  let writes = 0
+  const { app, records, runTimers } = harness({ beforePut: () => ++writes === 1 ? gate.promise : undefined })
+  const tab = app.addDocument(createDocument('flow'))
+  const first = app.persist(tab, true)
+  await settleUntil(() => writes === 1)
+  app.commit(tab, document => { document.title = '旧开关周期排队的内容' }, '改名')
+  const stale = app.persist(tab, true)
+  await app.setAutoSave(false)
+  app.commit(tab, document => { document.title = '新开关周期的最新内容' }, '改名')
+  await app.setAutoSave(true)
+  gate.resolve(); await Promise.all([first, stale])
+  assert.equal(writes, 1, 'Re-enabling must not allow the old generation of automatic writes to resume')
+  runTimers()
+  await settleUntil(() => records.get(tab.document.id)?.document.title === '新开关周期的最新内容')
+  assert.equal(writes, 2)
+})
+
+test('manual saving while automatic drafts are off still saves the latest file and local snapshot', async () => {
+  const { app, records, downloads, runTimers } = harness()
+  await app.setAutoSave(false)
+  const tab = app.addDocument(createDocument('flow'))
+  app.editor.value = { flush() { app.commit(tab, document => { document.title = '手动保存最新内容' }, '改名') } }
+  assert.equal(await app.save(tab), true)
+  assert.equal(downloads.length, 1)
+  assert.equal(JSON.parse(new TextDecoder().decode(downloads[0][1])).title, '手动保存最新内容')
+  assert.equal(records.get(tab.document.id).document.title, '手动保存最新内容')
+  assert.equal(app.dirty(tab), false)
+  assert.equal(app.autoSaveEnabled.value, false)
+  app.commit(tab, document => { document.title = '下一次尚未手动保存' }, '改名')
+  runTimers()
+  for (let turn = 0; turn < 20; turn++) await Promise.resolve()
+  assert.equal(records.get(tab.document.id).document.title, '手动保存最新内容')
+  assert.equal(app.dirty(tab), true)
+})
+
+test('disabled preference is restored before recovering tabs and does not rewrite existing drafts', async () => {
+  const doc = createDocument('flow')
+  let writes = 0
+  const { app, records, mounted, runTimers } = harness({
+    beforePut: () => { writes++ }, records: [record(doc, true)],
+    local: { 'ow-autosave': 'false', 'ow-session': JSON.stringify({ ids: [doc.id], activeId: doc.id, home: false }) },
+  })
+  for (const mount of mounted) await mount()
+  assert.equal(app.autoSaveEnabled.value, false)
+  assert.equal(app.tabs.value.length, 1)
+  assert.equal(app.tabs.value[0].draftRevision, app.tabs.value[0].revision)
+  runTimers()
+  for (let turn = 0; turn < 20; turn++) await Promise.resolve()
+  assert.equal(writes, 0)
+  assert.deepEqual(records.get(doc.id).document, doc)
+})
+
+test('paused drafts retain unsaved tab-close protection and cancel leaves current edits intact', async () => {
+  const { app, records } = harness()
+  await app.setAutoSave(false)
+  const tab = app.addDocument(createDocument('flow'))
+  app.commit(tab, document => { document.title = '关闭前未保存的编辑' }, '改名')
+  const closing = app.closeTab(tab)
+  await settleUntil(() => app.modal.value?.kind === 'unsaved')
+  app.finishModal('cancel'); await closing
+  assert.equal(app.tabs.value.length, 1)
+  assert.equal(tab.document.title, '关闭前未保存的编辑')
+  assert.equal(records.size, 0)
+  assert.equal(app.dirty(tab), true)
+})
+
+test('closing an unchanged saved tab while drafts are paused does not perform another automatic write', async () => {
+  let writes = 0
+  const { app, records } = harness({ beforePut: () => { writes++ } })
+  await app.setAutoSave(false)
+  const tab = app.addDocument(createDocument('flow'))
+  assert.equal(await app.save(tab), true)
+  assert.equal(writes, 1)
+  await app.closeTab(tab)
+  assert.equal(writes, 1)
+  assert.equal(app.tabs.value.length, 0)
+  assert.ok(records.has(tab.document.id), 'Closing a clean tab retains the manually saved local copy')
 })

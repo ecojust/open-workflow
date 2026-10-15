@@ -56,7 +56,7 @@ async function test(name, run, viewport = { width: 1440, height: 1000 }) {
   }
   try {
     await page.goto(baseURL)
-    await page.getByTestId('create-flow').waitFor()
+    await page.getByTestId('create-canvas').waitFor()
     await run(page, context)
     assert.deepEqual(errors, [], 'No uncaught browser errors')
     await page.screenshot({ path: path.join(output, `${name}.png`), fullPage: true, animations: 'disabled' })
@@ -231,7 +231,7 @@ async function main() {
   })
 
   await test('board-seven-new-shapes-have-real-outline', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     const shapes = [['triangle', '三角形'], ['hexagon', '六边形'], ['star', '星形'], ['parallelogram', '平行四边形'], ['cylinder', '圆柱'], ['cloud', '云形'], ['frame', '分区框架']]
     for (let index = 0; index < shapes.length; index++) {
       await page.getByRole('button', { name: '图形素材面板', exact: true }).click()
@@ -258,7 +258,7 @@ async function main() {
   })
 
   await test('board-group-drag-copy-alt-member-ungroup-and-lock', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.15, .23], [.32, .38])
     await draw(page, 'rectangle', [.49, .23], [.66, .38])
     await selectAll(page)
@@ -301,7 +301,7 @@ async function main() {
   // operation in its own real document/context, including all three saves.
   const alignmentValues = { left: e => e.x, center: e => e.x + e.width / 2, right: e => e.x + e.width, top: e => e.y, middle: e => e.y + e.height / 2, bottom: e => e.y + e.height }
   for (const operation of [...Object.keys(alignmentValues).map(direction => ({ type: 'align', direction })), ...['horizontal', 'vertical'].map(direction => ({ type: 'distribute', direction }))]) await test(`board-${operation.type}-${operation.direction}-save-and-undo`, async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.10, .20], [.24, .30])
     await draw(page, 'rectangle', [.38, .40], [.56, .57])
     await draw(page, 'rectangle', [.72, .69], [.86, .82])
@@ -325,7 +325,7 @@ async function main() {
   })
 
   await test('board-highlighter-eraser-one-history-step-and-locked-content', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.17, .30], [.32, .44])
     await draw(page, 'rectangle', [.47, .30], [.62, .44])
     const shapes = (await save(page)).scene.elements
@@ -358,7 +358,7 @@ async function main() {
   })
 
   await test('board-frame-follows-contained-content-note-color-opacity', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.20, .31], [.34, .44])
     await draw(page, 'note', [.40, .34], [.55, .49])
     await page.locator('.inline-text-editor').fill('跟随分区的便签')
@@ -410,7 +410,7 @@ async function main() {
   })
 
   await test('board-locked-group-keyboard-and-context-shortcuts', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.15, .30], [.32, .45])
     await draw(page, 'rectangle', [.49, .30], [.66, .45])
     await selectAll(page)
@@ -436,13 +436,13 @@ async function main() {
   })
 
   for (const id of ['brainstorm', 'quadrant', 'kanban', 'retrospective']) await test(`board-template-${id}-insert-undo-save`, async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.12, .20], [.30, .36])
     const before = await save(page)
     await page.getByTestId('board-template-toggle').click()
     const panel = page.getByTestId('board-template-panel')
     await expect(panel).toBeVisible()
-    await expect(panel.locator('[data-board-template]')).toHaveCount(4)
+    await expect(panel.locator('[data-board-template]')).toHaveCount(6)
     await panel.locator(`[data-board-template="${id}"]`).click()
     await expect(panel).toHaveCount(0)
     const inserted = await save(page)
@@ -469,10 +469,11 @@ async function main() {
       const issues = await page.locator(selector).evaluateAll(buttons => buttons.filter(button => !button.querySelector('svg path, svg line, svg polyline, svg rect, svg circle, svg ellipse, svg polygon')).map(button => button.getAttribute('aria-label') || button.getAttribute('title') || button.textContent))
       assert.deepEqual(issues, [], `Controls must use real SVG icons: ${selector}`)
     }
-    await assertIcons('[data-testid="create-flow"], [data-testid="create-board"], [data-testid="create-diagram"]')
+    await assertIcons('[data-testid="create-canvas"], [data-testid="create-diagram"]')
     for (const mode of ['flow', 'board', 'mermaid']) {
       if (mode !== 'flow') await page.locator('.tab-home').click()
-      await page.getByTestId(`create-${mode === 'mermaid' ? 'diagram' : mode}`).click()
+      if (mode === 'board') await page.getByRole('button', { name: '灵感收集板', exact: false }).click()
+      else await page.getByTestId(`create-${mode === 'mermaid' ? 'diagram' : 'canvas'}`).click()
       await assertIcons('button[title="保存 (Ctrl+S)"], button[title="导出"], button[aria-label="撤销"], button[aria-label="重做"]')
       if (mode !== 'mermaid') {
         await assertIcons('[data-testid^="tool-"], [data-testid="global-style-toggle"], button[aria-label="图形素材面板"], button[aria-label="属性面板"]')
@@ -501,7 +502,7 @@ async function main() {
     await page.getByTestId('diagram-confirm-template').click()
     await expect(page.getByTestId('diagram-preview').locator('svg')).toBeVisible()
     await page.locator('.tab-home').click()
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await assertFits(page, page.locator('.canvas-commandbar'))
     await page.getByRole('button', { name: '图形素材面板', exact: true }).click()
     await expect(page.getByRole('button', { name: '绘制星形', exact: true })).toBeVisible()

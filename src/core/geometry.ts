@@ -33,9 +33,66 @@ function normalizedOutline(points: Point[], node: ShapeElement): Point[] {
   const bounds = elementBounds({ id: '', type: 'stroke', points, style: node.style, locked: false })
   return points.map(p => ({ x: node.x + (p.x - bounds.x) / (bounds.width || 1) * node.width, y: node.y + (p.y - bounds.y) / (bounds.height || 1) * node.height }))
 }
+export type BraceShape = Extract<ShapeElement['shape'], `brace-${string}`>
+export function isBraceShape(shape: unknown): shape is BraceShape {
+  return shape === 'brace-left' || shape === 'brace-right' || shape === 'brace-top' || shape === 'brace-bottom'
+}
+type Cubic = [Point, Point, Point, Point]
+/** Braces are open curves; the rest of the node is an intentionally empty label area. */
+function braceCurves(node: ShapeElement): Cubic[] {
+  const curves = [
+    [[1, 0], [.5, 0], [.5, .1], [.5, .25]],
+    [[.5, .25], [.5, .4], [.5, .46], [0, .5]],
+    [[0, .5], [.5, .54], [.5, .6], [.5, .75]],
+    [[.5, .75], [.5, .9], [.5, 1], [1, 1]],
+  ]
+  const convert = ([across, along]: number[]): Point => {
+    let u: number, v: number
+    if (node.shape === 'brace-right') { u = 1 - across! * .25; v = along! }
+    else if (node.shape === 'brace-top') { u = along!; v = across! * .3 }
+    else if (node.shape === 'brace-bottom') { u = along!; v = 1 - across! * .3 }
+    else { u = across! * .25; v = along! }
+    return { x: node.x + u * node.width, y: node.y + v * node.height }
+  }
+  return curves.map(curve => curve.map(convert) as Cubic)
+}
+export function bracePath(node: ShapeElement): string {
+  const curves = braceCurves(node), first = curves[0]![0]
+  return `M${first.x} ${first.y}` + curves.map(([, a, b, end]) => ` C${a.x} ${a.y} ${b.x} ${b.y} ${end.x} ${end.y}`).join('')
+}
+export function braceTextBounds(node: ShapeElement): Bounds {
+  if (node.shape === 'brace-left') return { x: node.x + node.width * .3, y: node.y, width: node.width * .7, height: node.height }
+  if (node.shape === 'brace-right') return { x: node.x, y: node.y, width: node.width * .7, height: node.height }
+  if (node.shape === 'brace-top') return { x: node.x, y: node.y + node.height * .36, width: node.width, height: node.height * .64 }
+  if (node.shape === 'brace-bottom') return { x: node.x, y: node.y, width: node.width, height: node.height * .64 }
+  return { x: node.x, y: node.y, width: node.width, height: node.height }
+}
+function braceOutline(node: ShapeElement): Point[] {
+  const curves = braceCurves(node), result: Point[] = [curves[0]![0]]
+  const middle = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  function flatten([a, b, c, d]: Cubic, depth: number): void {
+    if (depth >= 12 || Math.max(distanceToSegment(b, a, d), distanceToSegment(c, a, d)) <= .12) { result.push(d); return }
+    const ab = middle(a, b), bc = middle(b, c), cd = middle(c, d), abc = middle(ab, bc), bcd = middle(bc, cd), center = middle(abc, bcd)
+    flatten([a, ab, abc, center], depth + 1); flatten([center, bcd, cd, d], depth + 1)
+  }
+  for (const curve of curves) flatten(curve, 0)
+  return result
+}
+function nearestOnPolyline(points: Point[], point: Point): Point {
+  let closest = points[0]!, distance = Infinity
+  for (let index = 1; index < points.length; index++) {
+    const a = points[index - 1]!, b = points[index]!, dx = b.x - a.x, dy = b.y - a.y, squared = dx * dx + dy * dy
+    const t = squared ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared)) : 0
+    const candidate = { x: a.x + dx * t, y: a.y + dy * t }, next = Math.hypot(candidate.x - point.x, candidate.y - point.y)
+    if (next < distance) { distance = next; closest = candidate }
+  }
+  return { ...closest }
+}
+
 /** One shared outline is used for rendering, binding, and pointer hit testing. */
 export function shapeOutline(node: ShapeElement): Point[] {
   const { x, y, width: w, height: h } = node
+  if (isBraceShape(node.shape)) return braceOutline(node)
   let points: Point[]
   if (node.shape === 'ellipse') return Array.from({ length: 64 }, (_, index) => { const angle = index * Math.PI / 32; return { x: x + w / 2 + Math.cos(angle) * w / 2, y: y + h / 2 + Math.sin(angle) * h / 2 } })
   if (node.shape === 'diamond') points = [{ x: .5, y: 0 }, { x: 1, y: .5 }, { x: .5, y: 1 }, { x: 0, y: .5 }]
@@ -69,12 +126,13 @@ export function shapeOutline(node: ShapeElement): Point[] {
 }
 export function shapeContainsPoint(node: ShapeElement, point: Point): boolean {
   if (node.width <= 0 || node.height <= 0) return false
+  if (isBraceShape(node.shape)) return outlineDistance(node, point) <= Math.max(0.25, node.style.strokeWidth / 2)
   if (node.shape === 'ellipse') return ((point.x - node.x - node.width / 2) / (node.width / 2)) ** 2 + ((point.y - node.y - node.height / 2) / (node.height / 2)) ** 2 <= 1 + 1e-10
   return pointInPolygon(point, shapeOutline(node))
 }
 /** Exterior distance; a frame's empty interior deliberately is not an attachment target. */
 export function outlineDistance(node: ShapeElement, point: Point): number {
-  if (node.shape !== 'frame' && shapeContainsPoint(node, point)) return 0
+  if (node.shape !== 'frame' && !isBraceShape(node.shape) && shapeContainsPoint(node, point)) return 0
   if (node.shape === 'ellipse') {
     const rx = node.width / 2, ry = node.height / 2, x = Math.abs(point.x - node.x - rx), y = Math.abs(point.y - node.y - ry), xx = rx * rx, yy = ry * ry
     const equation = (t: number) => (rx * x / (t + xx)) ** 2 + (ry * y / (t + yy)) ** 2
@@ -86,11 +144,13 @@ export function outlineDistance(node: ShapeElement, point: Point): number {
   }
   const points = shapeOutline(node)
   let minimum = Infinity
-  for (let i = 0; i < points.length; i++) minimum = Math.min(minimum, distanceToSegment(point, points[i]!, points[(i + 1) % points.length]!))
+  const segments = isBraceShape(node.shape) ? points.length - 1 : points.length
+  for (let i = 0; i < segments; i++) minimum = Math.min(minimum, distanceToSegment(point, points[i]!, points[(i + 1) % points.length]!))
   return minimum
 }
 /** Ray/shape intersection makes an edge follow its node without storing stale anchors. */
 export function shapeAnchor(node: ShapeElement, toward: Point): Point {
+  if (isBraceShape(node.shape)) return nearestOnPolyline(shapeOutline(node), toward)
   const c = center(node), dx = toward.x - c.x, dy = toward.y - c.y
   if (!dx && !dy) return shapeAnchor(node, { x: c.x, y: c.y + 1 })
   if (!['rectangle', 'ellipse', 'diamond', 'note', 'text', 'image', 'frame'].includes(node.shape)) {
@@ -124,7 +184,7 @@ function routeCrossesBounds(points: Point[], bounds: Bounds, skipFirst = false, 
 /** A bounded fallback for back edges, not a general graph obstacle router. */
 function avoidReturnObstacles(points: Point[], fromNode: ShapeElement, toNode: ShapeElement, shapes: ShapeElement[]): Point[] {
   // Captions and enclosing frames must not turn an ordinary edge into a diagram-sized detour.
-  const obstacles = shapes.filter(node => node !== fromNode && node !== toNode && node.shape !== 'text' && node.shape !== 'frame')
+  const obstacles = shapes.filter(node => node !== fromNode && node !== toNode && node.shape !== 'text' && node.shape !== 'frame' && !isBraceShape(node.shape))
   if (!obstacles.some(node => routeCrossesBounds(points, node))) return points
   const bounds = combineBounds([fromNode, toNode, ...obstacles]), fromCenter = center(fromNode), toCenter = center(toNode)
   const candidates: Point[][] = []

@@ -16,7 +16,7 @@ import { closeNativeWindow, isDesktop, onNativeCloseRequest, openNativeFiles, sa
 interface Tab {
   document: WorkflowDocument; history: Pick<DocumentHistory, 'canUndo' | 'canRedo' | 'commit' | 'undo' | 'redo'>; savedKey: string | null
   path?: string; stamp?: string; revision: number; draftRevision: number
-  draftState: 'pending' | 'saved' | 'error'; lastOpened: number
+  draftState: 'pending' | 'saved' | 'paused' | 'error'; lastOpened: number
 }
 type ModalKind = 'unsaved' | 'rename' | 'notice' | 'delete' | 'help'
 interface Modal { kind: ModalKind; title: string; text: string; lines?: string[]; value?: string }
@@ -40,12 +40,20 @@ const native = isDesktop()
 const theme = ref<'light' | 'dark' | 'system'>('system')
 const systemDark = ref(false)
 const collapsed = ref(false)
+const autoSaveEnabled = ref(true)
 const effectiveTheme = computed(() => theme.value === 'system' ? systemDark.value ? 'dark' : 'light' : theme.value)
 const active = computed(() => tabs.value.find(tab => tab.document.id === activeId.value))
 const visibleRecent = computed(() => recent.value.filter(entry => `${entry.document.title} ${kindName(entry.document.kind)}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => b.lastOpened - a.lastOpened))
 const dirty = (tab: Tab) => tab.savedKey !== contentKey(tab.document)
 const hasDirty = () => tabs.value.some(dirty)
-const activeSaveState = computed(() => !active.value ? '本地优先 · 无需账号' : active.value.draftState === 'error' ? '草稿保存失败' : active.value.draftState === 'pending' ? '正在保存草稿…' : dirty(active.value) ? '草稿已保存 · 尚未保存到文件' : '草稿已保存 · 文件版本一致')
+const activeSaveState = computed(() => {
+  const tab = active.value
+  if (!tab) return autoSaveEnabled.value ? '自动保存本地草稿' : '自动保存已关闭'
+  if (tab.draftState === 'error') return '草稿保存失败 · 点击重试'
+  if (!autoSaveEnabled.value) return tab.draftRevision === tab.revision ? '自动保存已关闭 · 草稿已保存' : '自动保存已关闭 · 草稿未更新'
+  if (tab.draftState === 'pending') return '正在保存草稿…'
+  return dirty(tab) ? '草稿已保存 · 尚未保存到文件' : '草稿已保存 · 文件版本一致'
+})
 const queues = new Map<string, Promise<void>>()
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const closingTabs = new Set<string>()
@@ -55,9 +63,10 @@ let previousFocus: HTMLElement | null = null
 let unlisten: (() => void) | undefined
 let closing = false
 let saveCompletion: Promise<void> | undefined
+let autoSaveGeneration = 0
 
-function kindName(kind: DocumentKind): string { return { flow: '流程图', board: '自由白板', mermaid: '代码图表' }[kind] }
-function kindIcon(kind: DocumentKind): string { return { flow: 'flow', board: 'board', mermaid: 'code' }[kind] }
+function kindName(kind: DocumentKind): string { return kind === 'mermaid' ? '代码图表' : '画布' }
+function kindIcon(kind: DocumentKind): string { return kind === 'mermaid' ? 'code' : 'canvas' }
 function message(text: string, error = false) {
   toast.value = { text, error }; clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toast.value = null }, error ? 12000 : 5000)
@@ -71,13 +80,19 @@ function updateRecent(record: DraftRecord) {
   if (index < 0) recent.value.unshift(record)
   else recent.value[index] = record
 }
-async function persist(tab: Tab): Promise<void> {
+async function persist(tab: Tab, automatic = false, generation = autoSaveGeneration): Promise<void> {
+  if (automatic && (!autoSaveEnabled.value || generation !== autoSaveGeneration)) return
   const id = tab.document.id
   clearTimeout(draftTimers.get(id)); draftTimers.delete(id)
   const revision = tab.revision
   const record: DraftRecord = { id, document: clone(tab.document), savedKey: tab.savedKey, lastOpened: tab.lastOpened }
   const previous = queues.get(id) || Promise.resolve()
-  const work = previous.catch(() => {}).then(() => putDraft(record)).then(() => {
+  const work = previous.catch(() => {}).then(async () => {
+    if (automatic && (!autoSaveEnabled.value || generation !== autoSaveGeneration)) return false
+    await putDraft(record)
+    return true
+  }).then(written => {
+    if (!written) return
     updateRecent(record)
     if (tab.revision === revision) { tab.draftState = 'saved'; tab.draftRevision = revision }
   }).catch(error => { tab.draftState = 'error'; errorMessage(new Error(`本地草稿未保存：${error instanceof Error ? error.message : String(error)}。请保存到文件。`)) })
@@ -85,14 +100,35 @@ async function persist(tab: Tab): Promise<void> {
   if (queues.get(id) === work) queues.delete(id)
 }
 function scheduleDraft(tab: Tab) {
-  tab.draftState = 'pending'
   clearTimeout(draftTimers.get(tab.document.id))
-  draftTimers.set(tab.document.id, setTimeout(() => void persist(tab), 300))
+  draftTimers.delete(tab.document.id)
   rememberSession()
+  if (!autoSaveEnabled.value) { tab.draftState = tab.draftRevision === tab.revision ? 'saved' : 'paused'; return }
+  tab.draftState = 'pending'
+  const generation = autoSaveGeneration
+  draftTimers.set(tab.document.id, setTimeout(() => void persist(tab, true, generation), 300))
 }
+async function setAutoSave(enabled: boolean): Promise<void> {
+  if (autoSaveEnabled.value === enabled) return
+  autoSaveEnabled.value = enabled
+  const generation = ++autoSaveGeneration
+  try { localStorage.setItem('ow-autosave', String(enabled)) } catch { /* The switch still applies to this session. */ }
+  for (const timer of draftTimers.values()) clearTimeout(timer)
+  draftTimers.clear()
+  if (!enabled) {
+    for (const tab of tabs.value) if (tab.draftState !== 'error') tab.draftState = tab.draftRevision === tab.revision ? 'saved' : 'paused'
+    status.value = '自动保存已关闭，修改仍可手动保存。'
+    return
+  }
+  await flush()
+  if (!autoSaveEnabled.value || generation !== autoSaveGeneration) return
+  for (const tab of tabs.value) scheduleDraft(tab)
+  status.value = '已开启本地草稿自动保存。'
+}
+function toggleAutoSave() { void setAutoSave(!autoSaveEnabled.value) }
 function addDocument(document: WorkflowDocument, savedKey: string | null = null, path?: string, stamp?: string, existingDraft = false) {
   if (tabs.value.some(tab => tab.document.id === document.id) || (!existingDraft && recent.value.some(record => record.id === document.id))) document = { ...document, id: newId('doc') }
-  const tab: Tab = { document, history: markRaw(new DocumentHistory(document)), savedKey, path, stamp, revision: 0, draftRevision: -1, draftState: 'pending', lastOpened: Date.now() }
+  const tab: Tab = { document, history: markRaw(new DocumentHistory(document)), savedKey, path, stamp, revision: 0, draftRevision: existingDraft ? 0 : -1, draftState: 'pending', lastOpened: Date.now() }
   tabs.value.push(tab); activeId.value = document.id; home.value = false
   scheduleDraft(tabs.value[tabs.value.length - 1]!)
   return tab
@@ -172,7 +208,8 @@ async function exportAs(format: ExportFormat, selection?: Scene) {
     const output = await exportDocument(snapshot, format)
     if (native) { const result = await saveNativeFile({ suggestedName: output.name, bytes: output.bytes }); if (!result) return }
     else downloadBytes(output.name, output.bytes, output.mime)
-    message(`已导出 ${output.name}`)
+    const hasBraces = snapshot.scene.elements.some(element => element.type === 'shape' && element.shape.startsWith('brace-'))
+    message(`已导出 ${output.name}${hasBraces && (format === 'drawio' || format === 'excalidraw') ? '；大括弧在兼容格式中以线条呈现，回到本软件可恢复编辑。' : ''}`)
   } catch (error) { errorMessage(error) } finally { busy.value = '' }
 }
 async function loadFiles(files: Array<{ name: string; text: string; path?: string; stamp?: string }>) {
@@ -244,7 +281,7 @@ async function closeTab(tab: Tab) {
   closingTabs.add(id)
   try {
     await flush(); const choice = await mayClose(tab); if (choice === 'cancel') return
-    if (choice === 'remove') await removeLocal(id); else await persist(tab)
+    if (choice === 'remove') await removeLocal(id); else if (autoSaveEnabled.value) await persist(tab, true)
     const index = tabs.value.findIndex(item => item.document.id === id)
     if (index < 0) return
     tabs.value.splice(index, 1)
@@ -277,7 +314,7 @@ async function nativeClose() {
     }
     closingWindow.value = true
     for (const { tab, choice } of choices) {
-      if (choice === 'remove') await removeLocal(tab.document.id); else await persist(tab)
+      if (choice === 'remove') await removeLocal(tab.document.id); else if (autoSaveEnabled.value) await persist(tab, true)
     }
     await closeNativeWindow()
     requested = true
@@ -310,10 +347,10 @@ function keyboard(event: KeyboardEvent) {
 function unload(event: BeforeUnloadEvent) {
   if (closingWindow.value) return
   void editor.value?.flush()
-  for (const tab of tabs.value) if (tab.draftState === 'pending') void persist(tab)
+  if (autoSaveEnabled.value) for (const tab of tabs.value) if (tab.draftState === 'pending') void persist(tab, true)
   if (hasDirty()) { event.preventDefault(); event.returnValue = '' }
 }
-function pageHide() { if (closingWindow.value) return; void editor.value?.flush(); for (const tab of tabs.value) if (tab.draftState === 'pending') void persist(tab) }
+function pageHide() { if (closingWindow.value) return; void editor.value?.flush(); if (autoSaveEnabled.value) for (const tab of tabs.value) if (tab.draftState === 'pending') void persist(tab, true) }
 const media = typeof window === 'undefined' ? null : window.matchMedia('(prefers-color-scheme: dark)')
 function mediaChange() { systemDark.value = media?.matches || false }
 onMounted(async () => {
@@ -322,6 +359,7 @@ onMounted(async () => {
   try {
     const savedTheme = localStorage.getItem('ow-theme'); if (['light', 'dark', 'system'].includes(savedTheme || '')) theme.value = savedTheme as typeof theme.value
     collapsed.value = localStorage.getItem('ow-sidebar') === 'true'
+    autoSaveEnabled.value = localStorage.getItem('ow-autosave') !== 'false'
     const result = await readDrafts(); recent.value = result.records
     if (result.skipped) message(`${result.skipped} 份损坏的草稿未能恢复；原始数据仍在本地。`, true)
     const session = JSON.parse(localStorage.getItem('ow-session') || '{}')
@@ -339,6 +377,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   media?.removeEventListener('change', mediaChange); window.removeEventListener('keydown', keyboard); window.removeEventListener('beforeunload', unload); window.removeEventListener('pagehide', pageHide); unlisten?.(); clearTimeout(toastTimer)
   for (const timer of draftTimers.values()) clearTimeout(timer)
+  draftTimers.clear(); autoSaveGeneration++
 })
 </script>
 
@@ -358,6 +397,7 @@ onBeforeUnmount(() => {
         <button class="icon-button" title="重做 (Ctrl+Shift+Z)" aria-label="重做" :disabled="home || !active?.history.canRedo" @click="historyAction('redo')"><AppIcon name="redo"/></button>
       </div>
       <div class="toolbar-end">
+        <button class="autosave-switch" role="switch" aria-label="自动保存本地草稿" :aria-checked="autoSaveEnabled" :title="autoSaveEnabled ? '自动保存已开启：仅保存本地草稿' : '自动保存已关闭：可手动保存文件与草稿'" data-testid="autosave-toggle" :disabled="booting || closingWindow" @click="toggleAutoSave"><span>自动保存</span><svg class="switch-track" width="30" height="18" viewBox="0 0 30 18" aria-hidden="true"><rect x="0" y="0" width="30" height="18" rx="9"/><circle :cx="autoSaveEnabled ? 21 : 9" cy="9" r="6"/></svg></button>
         <button class="icon-button" title="切换外观" aria-label="切换外观" :aria-expanded="menu === 'theme'" @click="menu = menu === 'theme' ? null : 'theme'"><AppIcon :name="effectiveTheme === 'dark' ? 'moon' : 'sun'"/></button>
         <button class="icon-button help-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
       </div>
@@ -380,24 +420,20 @@ onBeforeUnmount(() => {
           <div class="welcome"><div><p class="eyebrow">OPEN WORKFLOW</p><h1>{{ section === 'home' ? '让想法，清晰可见。' : '继续你的创作。' }}</h1><p>{{ section === 'home' ? '从一条流程、一张白板，或几行文字开始。' : '本机上的文档草稿，都在这里。' }}</p></div><button class="secondary open-file-button" @click="openFiles"><AppIcon name="folder"/>打开已有文件</button></div>
           <template v-if="section === 'home'">
             <div class="create-grid">
-              <button class="create-card flow-card" data-testid="create-flow" @click="create('flow')">
+              <button class="create-card canvas-card" data-testid="create-canvas" @click="create('flow')">
                 <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M65 56h48m54 0h48" stroke="#94b5ef" fill="none" stroke-width="2"/><rect x="18" y="36" width="70" height="40" rx="8" fill="#fff" stroke="#80a7e8"/><path d="m140 28 36 28-36 28-36-28z" fill="#dbeafe" stroke="#4c83dc"/><rect x="194" y="36" width="70" height="40" rx="20" fill="#fff" stroke="#80a7e8"/><path d="M35 56h35m149 0h22" stroke="#a8bfdf" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
-                <div class="card-copy"><span class="type-icon"><AppIcon name="flow" :size="22"/></span><div><h2>流程图</h2><p>梳理步骤，连接逻辑</p></div><AppIcon name="arrow"/></div>
-              </button>
-              <button class="create-card board-card" data-testid="create-board" @click="create('board')">
-                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M88 67q45-65 100-12" stroke="#bc92d6" stroke-width="2" fill="none" stroke-dasharray="5 4"/><rect x="33" y="18" width="70" height="70" rx="3" fill="#fde68a" transform="rotate(-6 68 53)"/><rect x="172" y="29" width="70" height="70" rx="3" fill="#ddd6fe" transform="rotate(7 207 64)"/><path d="M48 40h40m-40 10h30m97 5h40m-40 10h29" stroke="#9d8a7a" opacity=".6" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
-                <div class="card-copy"><span class="type-icon"><AppIcon name="board" :size="22"/></span><div><h2>自由白板</h2><p>手绘、便签与灵感收集</p></div><AppIcon name="arrow"/></div>
+                <div class="card-copy"><span class="type-icon"><AppIcon name="canvas" :size="22"/></span><div><h2>画布</h2><p>流程、手绘、便签与灵感收集</p></div><AppIcon name="arrow"/></div>
               </button>
               <button class="create-card diagram-card" data-testid="create-diagram" @click="create('mermaid')">
                 <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><rect x="30" y="18" width="146" height="78" rx="8" fill="#fff" stroke="#9acac4"/><path d="m45 40 8 6-8 6m16-6h63M45 65h20m9 0h62m-91 12h56" stroke="#77aaa2" stroke-width="3" stroke-linecap="round"/><path d="M192 40h48v20h-48zm24 20v17m-14 0h28" stroke="#55988e" fill="#d5ece7" stroke-width="2"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
                 <div class="card-copy"><span class="type-icon"><AppIcon name="code" :size="22"/></span><div><h2>代码图表</h2><p>用文字绘制多种图表</p></div><AppIcon name="arrow"/></div>
               </button>
             </div>
-            <div class="template-row"><span>从示例开始</span><button @click="create('flow', true)"><AppIcon name="flow" :size="15"/>项目审批流程<AppIcon name="arrow" :size="14"/></button><button @click="create('board', true)"><AppIcon name="board" :size="15"/>灵感收集板<AppIcon name="arrow" :size="14"/></button><span class="format-hint">支持图形 XML、白板 JSON 与图表源码</span></div>
+            <div class="template-row"><span>从模板开始</span><button @click="create('flow', true)"><AppIcon name="flow" :size="15"/>项目审批流程<AppIcon name="arrow" :size="14"/></button><button @click="create('board', true)"><AppIcon name="board" :size="15"/>灵感收集板<AppIcon name="arrow" :size="14"/></button><span class="format-hint">支持图形 XML、白板 JSON 与图表源码</span></div>
           </template>
           <section class="recent-section" aria-label="最近文档">
             <div class="section-title"><h2>最近文档 <small>{{ recent.length }}</small></h2><label class="search"><AppIcon name="search" :size="16"/><input v-model="search" placeholder="搜索本地文档" aria-label="搜索本地文档"></label></div>
-            <div v-if="!visibleRecent.length" class="empty-state"><div class="empty-icon"><AppIcon name="folder" :size="30"/></div><h3>{{ search ? '没有匹配的文档' : '这里将收起你的每一个想法' }}</h3><p>{{ search ? '换一个关键词试试。' : '新建或打开文档后，草稿会自动保存在本机。' }}</p><button v-if="!search" class="text-button" @click="openFiles">打开第一个文件<AppIcon name="arrow" :size="16"/></button></div>
+            <div v-if="!visibleRecent.length" class="empty-state"><div class="empty-icon"><AppIcon name="folder" :size="30"/></div><h3>{{ search ? '没有匹配的文档' : '这里将收起你的每一个想法' }}</h3><p>{{ search ? '换一个关键词试试。' : autoSaveEnabled ? '新建或打开文档后，草稿会自动保存在本机。' : '自动保存已关闭；手动保存或开启开关后，会在这里留下草稿。' }}</p><button v-if="!search" class="text-button" @click="openFiles">打开第一个文件<AppIcon name="arrow" :size="16"/></button></div>
             <div v-else class="recent-list">
               <div v-for="record in visibleRecent" :key="record.id" class="recent-item">
                 <button class="recent-open" @click="openRecent(record)"><span class="recent-icon" :class="record.document.kind === 'mermaid' ? 'diagram' : record.document.kind"><AppIcon :name="kindIcon(record.document.kind)" :size="22"/></span><span class="recent-title"><strong>{{ record.document.title }}</strong><small>{{ kindName(record.document.kind) }} · {{ record.document.kind === 'mermaid' ? '文本绘图' : `${record.document.scene.elements.length} 个元素` }}</small></span><time :datetime="record.document.updatedAt" :title="new Date(record.document.updatedAt).toLocaleString()">{{ date(record.document.updatedAt) }}</time><AppIcon name="arrow" :size="17"/></button>
@@ -405,7 +441,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </section>
-          <div class="home-footnote"><span>一个工作台，三种表达方式</span><span>Open Workflow · 0.1.0</span></div>
+          <div class="home-footnote"><span>自由绘制，也可用文字构建图表</span><span>Open Workflow · 0.1.0</span></div>
         </div>
       </main>
     </div>
@@ -424,10 +460,10 @@ onBeforeUnmount(() => {
       <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event" @export="exportAs"/>
     </main>
 
-    <footer class="status-bar"><span class="status-info">{{ home ? '流程图 · 自由白板 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error' }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
+    <footer class="status-bar"><span class="status-info">{{ home ? '画布 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error', paused: !autoSaveEnabled }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : !autoSaveEnabled ? 'save' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
 
     <template v-if="menu"><div class="menu-dismiss" @click="menu = null"></div><div class="popup-menu" :class="`menu-${menu}`" role="menu">
-      <template v-if="menu === 'new'"><p>新建文档</p><button role="menuitem" @click="create('flow')"><AppIcon name="flow"/>流程图<small>节点与连线</small></button><button role="menuitem" @click="create('board')"><AppIcon name="board"/>自由白板<small>笔迹与便签</small></button><button role="menuitem" @click="create('mermaid')"><AppIcon name="code"/>代码图表<small>文本绘图</small></button></template>
+      <template v-if="menu === 'new'"><p>新建文档</p><button role="menuitem" @click="create('flow')"><AppIcon name="canvas"/>画布<small>流程、手绘与便签</small></button><button role="menuitem" @click="create('mermaid')"><AppIcon name="code"/>代码图表<small>文本绘图</small></button></template>
       <template v-else-if="menu === 'export'"><p>导出当前文档</p><button role="menuitem" @click="exportAs('svg')"><AppIcon name="export"/>SVG 矢量图</button><button role="menuitem" @click="exportAs('png')"><AppIcon name="export"/>PNG 图片</button><button role="menuitem" @click="exportAs('drawio')"><AppIcon name="flow"/>图形 XML<small>基础图形</small></button><button role="menuitem" @click="exportAs('excalidraw')"><AppIcon name="board"/>白板 JSON<small>基础元素</small></button><button v-if="active?.document.kind === 'mermaid'" role="menuitem" @click="exportAs('mmd')"><AppIcon name="code"/>图表源码</button><button v-if="active?.document.importSource" role="menuitem" @click="exportAs('original')"><AppIcon name="download"/>导入时的原文件</button></template>
       <template v-else><p>外观</p><button v-for="option in [{ value: 'light', label: '浅色', icon: 'sun' }, { value: 'dark', label: '深色', icon: 'moon' }, { value: 'system', label: '跟随系统', icon: 'monitor' }]" :key="option.value" role="menuitemradio" :aria-checked="theme === option.value" @click="setTheme(option.value as 'light' | 'dark' | 'system')"><AppIcon :name="option.icon"/>{{ option.label }}<AppIcon v-if="theme === option.value" name="check" :size="16"/></button></template>
     </div></template>
@@ -439,7 +475,7 @@ onBeforeUnmount(() => {
       <section ref="modalPanel" class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><h2 id="modal-title">{{ modal.title }}</h2><button class="icon-button" title="关闭" aria-label="关闭对话框" @click="finishModal('cancel')"><AppIcon name="close"/></button></header><div class="modal-body">
         <p v-if="modal.text">{{ modal.text }}</p><input v-if="modal.kind === 'rename'" v-model="modal.value" class="rename-input" maxlength="200" aria-label="文档名称" @keydown.enter="finishModal('confirm')">
         <ul v-if="modal.lines" class="import-notes"><li v-for="(line, index) in modal.lines" :key="index">{{ line }}</li></ul>
-        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>流程与白板</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>白板提供荧光笔、整元素橡皮擦、分区框架和四套可编辑模板。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>代码图表工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；全局绘图风格提供 10 种预设，导出和可编辑副本保留同样的外观。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>本地草稿自动保存到当前浏览器/桌面工作区。Ctrl+S 保存可迁移的 .owflow 文件。图形 XML 和白板 JSON 支持基础元素导入，转换限制会单独提示。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
+        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>画布</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>画布统一提供流程图形、四方向大括弧、笔迹、荧光笔、整元素橡皮擦、分区框架和可编辑模板。开启工具锁可连续绘制，Esc 退出；绘制前可设置连线类型和箭头。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>代码图表工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；全局绘图风格提供 10 种预设，导出和可编辑副本保留同样的外观。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>顶部“自动保存”开关只控制本地草稿，默认开启并记住选择，不会自动写入原文件。关闭后可用 Ctrl+S 手动保存 .owflow 文件并同步草稿；重新开启会保存所有已打开文档的最新内容。图形 XML 和白板 JSON 支持基础元素导入，转换限制会单独提示。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
       </div><footer><template v-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
     </div>
   </div>

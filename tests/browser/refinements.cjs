@@ -40,7 +40,7 @@ async function test(name, run, viewport = { width: 1440, height: 1000 }) {
   page.on('pageerror', error => errors.push(error.message))
   try {
     await page.goto(baseURL)
-    await page.getByTestId('create-flow').waitFor()
+    await page.getByTestId('create-canvas').waitFor()
     await run(page, context)
     assert.deepEqual(errors, [], 'There should be no uncaught browser errors')
     await page.screenshot({ path: path.join(output, `${name}.png`), fullPage: true, animations: 'disabled' })
@@ -119,7 +119,7 @@ async function main() {
   const executablePath = process.env.CHROMIUM_EXECUTABLE || (await fs.access('/usr/bin/chromium').then(() => '/usr/bin/chromium', () => undefined))
   browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--disable-dev-shm-usage'], headless: true })
   await test('inline-edit-shapes-blank-and-edge', async page => {
-    await page.getByTestId('create-flow').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [0.13, 0.32], [0.34, 0.50])
     const first = elements(page, 'shape').first()
     await first.dblclick()
@@ -167,7 +167,12 @@ async function main() {
     assert.equal(cancelled.scene.elements.find(element => element.type === 'edge').label, '审核通过')
   })
   for (const mode of ['flow', 'board']) await test(`adaptive-grid-${mode}-at-all-zoom-levels`, async page => {
-    await page.getByTestId(`create-${mode}`).click()
+    if (mode === 'board') {
+      const legacy = JSON.parse(await fs.readFile(path.join(root, 'tests/fixtures/flow.owflow'), 'utf8'))
+      legacy.kind = 'board'; legacy.scene.elements = []
+      await page.locator('#file-input').setInputFiles({ name: 'legacy-canvas.owflow', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(legacy)) })
+      await expect(page.getByTestId('canvas-stage')).toBeVisible()
+    } else await page.getByTestId('create-canvas').click()
     async function inspectGrid() {
       return page.locator('svg.scene-svg').evaluate(svg => {
         const pattern = svg.querySelector('pattern')
@@ -242,7 +247,7 @@ async function main() {
     await assertFits(page)
   })
   await test('global-line-style-existing-new-and-history', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.13, .30], [.34, .48])
     await draw(page, 'note', [.53, .30], [.75, .52])
     await page.locator('.inline-text-editor').fill('原有便签')
@@ -289,7 +294,7 @@ async function main() {
     assert.ok(clean.scene.elements.every(element => element.style.roughness === 'clean'))
   })
   await test('save-unedited-global-controls-preserves-mixed-styles', async page => {
-    await page.getByTestId('create-flow').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.13, .32], [.34, .52])
     await draw(page, 'rectangle', [.64, .32], [.85, .52])
     await expect(elements(page, 'shape')).toHaveCount(2)
@@ -315,7 +320,7 @@ async function main() {
     await expect(page.locator('#global-width')).toHaveValue('2')
   })
   await test('nearby-binding-and-endpoint-reconnect', async page => {
-    await page.getByTestId('create-flow').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.10, .28], [.29, .46])
     await draw(page, 'rectangle', [.63, .28], [.82, .46])
     await draw(page, 'ellipse', [.63, .65], [.82, .83])
@@ -360,7 +365,7 @@ async function main() {
     assert.equal(moved.scene.elements.find(element => element.type === 'edge').to.nodeId, thirdId)
   })
   await test('context-menu-layer-edit-lock-copy-delete', async page => {
-    await page.getByTestId('create-flow').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.10, .32], [.38, .62])
     await draw(page, 'rectangle', [.30, .32], [.58, .62])
     await draw(page, 'rectangle', [.50, .32], [.78, .62])
@@ -405,7 +410,7 @@ async function main() {
     await expect(elements(page, 'shape')).toHaveCount(4)
   })
   await test('context-export-all-selection-and-edge', async page => {
-    await page.getByTestId('create-flow').click()
+    await page.getByTestId('create-canvas').click()
     await draw(page, 'rectangle', [.12, .32], [.33, .52])
     await labelShape(page, elements(page, 'shape').first(), '只在选区的节点甲')
     await draw(page, 'rectangle', [.64, .32], [.85, .52])
@@ -440,12 +445,12 @@ async function main() {
     assert.ok(!exported.text.includes('节点甲') && !exported.text.includes('节点乙'))
   })
   await test('compact-mobile-toolbar-and-context-menu', async page => {
-    await page.getByTestId('create-board').click()
+    await page.getByTestId('create-canvas').click()
     const stage = await page.getByTestId('canvas-stage').boundingBox()
     assert.ok(stage.width >= 300)
     const toolbar = await page.locator('.canvas-commandbar').boundingBox()
     assert.ok(toolbar.x >= 0 && toolbar.x + toolbar.width <= 321)
-    assert.ok(toolbar.height <= 64, 'Floating toolbar should remain compact on a narrow viewport')
+    assert.ok(toolbar.height <= 88, 'The two-row mobile toolbar should keep tools and settings compact and reachable')
     await draw(page, 'note', [.15, .30], [.75, .60])
     await page.locator('.inline-text-editor').fill('窄屏原位编辑')
     await page.locator('.inline-text-editor').press('Control+Enter')

@@ -9,7 +9,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5199 --strictPort",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:browser": "node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs",
+    "test:browser": "node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs && node tests/browser/canvas-workspace.cjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"

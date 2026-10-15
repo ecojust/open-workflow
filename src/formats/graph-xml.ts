@@ -1,6 +1,6 @@
 import { Inflate, strFromU8 } from 'fflate'
 import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, type Scene, type SceneElement, type ShapeElement } from '../core/types.ts'
-import { edgePoints } from '../core/geometry.ts'
+import { edgePoints, isBraceShape, shapeOutline, braceTextBounds } from '../core/geometry.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
 import { validateElementStyle } from '../core/documents.ts'
 
@@ -156,13 +156,15 @@ function importModel(model: Element, title: string): ImportedScene {
   const elements: SceneElement[] = []
   const nodes = new Map<string, ShapeElement>()
   for (const [id, cell] of cellMap) {
-    if (cell.getAttribute('vertex') !== '1') continue
+    const braceShape = cell.getAttribute('openWorkflowShape')
+    if (cell.getAttribute('vertex') !== '1' && !isBraceShape(braceShape)) continue
     const map = styleMap(cell.getAttribute('style') || '')
     if (map.group === '1' || map.shape === 'group') { warnings.add('分组已展开；成员的世界坐标得到保留，分组关系不保留。'); continue }
     const style = readStyle(map, warnings)
     let shape: ShapeElement['shape'] = 'rectangle'
     const name = map.shape || (map.ellipse ? 'ellipse' : map.rhombus ? 'rhombus' : map.text ? 'text' : 'rectangle')
-    if (name === 'ellipse') shape = 'ellipse'
+    if (isBraceShape(braceShape)) { shape = braceShape; style.fill = 'none'; warnings.add('大括弧通过本软件元数据恢复；外部软件仅显示普通开放线条，可能无法保留括弧编辑与绑定语义。') }
+    else if (name === 'ellipse') shape = 'ellipse'
     else if (name === 'rhombus' || name === 'diamond') shape = 'diamond'
     else if (name === 'text') { shape = 'text'; style.fill = 'transparent'; style.stroke = color(map.fontColor || map.strokeColor, DEFAULT_STYLE.stroke, warnings) }
     else if (['note', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame'].includes(name)) shape = name as ShapeElement['shape']
@@ -173,11 +175,12 @@ function importModel(model: Element, title: string): ImportedScene {
     if (cell.getAttribute('parent') && cellMap.get(cell.getAttribute('parent')!)?.getAttribute('vertex') === '1') warnings.add('分组和容器关系已展开为普通图形。')
     const wrapper = cell.parentNode?.nodeType === 1 ? cell.parentNode as Element : null
     const label = cell.getAttribute('value') || (wrapper?.tagName !== 'root' ? wrapper?.getAttribute('label') : '') || ''
-    const node: ShapeElement = { id: idMap.get(id)!, type: 'shape', shape, ...position(id), text: plainLabel(label, warnings, map.html === '1'), style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' || map.movable === '0', ...(shape === 'image' ? { imageData } : {}) }
+    const bounds = isBraceShape(braceShape) ? { x: finite(cell.getAttribute('openWorkflowX')), y: finite(cell.getAttribute('openWorkflowY')), width: Math.max(1, finite(cell.getAttribute('openWorkflowWidth'), 160)), height: Math.max(1, finite(cell.getAttribute('openWorkflowHeight'), 180)) } : position(id)
+    const node: ShapeElement = { id: idMap.get(id)!, type: 'shape', shape, ...bounds, text: plainLabel(label, warnings, map.html === '1'), style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' || map.movable === '0', ...(shape === 'image' ? { imageData } : {}) }
     nodes.set(id, node); elements.push(node)
   }
   for (const [id, cell] of cellMap) {
-    if (cell.getAttribute('edge') !== '1') continue
+    if (cell.getAttribute('edge') !== '1' || isBraceShape(cell.getAttribute('openWorkflowShape'))) continue
     const map = styleMap(cell.getAttribute('style') || '')
     const style = readStyle(map, warnings)
     const geometry = direct(cell, 'mxGeometry')
@@ -251,6 +254,11 @@ export function exportGraphXml(scene: Scene, title: string): string {
   const elements = scene.elements.map(element => {
     const attributes = `id="${xml(cellId(element.id))}" openWorkflowId="${xml(element.id)}" openWorkflowLocked="${element.locked ? 1 : 0}"${element.groupId ? ` openWorkflowGroup="${xml(element.groupId)}"` : ''} parent="1"`
     if (element.type === 'shape') {
+      if (isBraceShape(element.shape)) {
+        const points = shapeOutline(element), text = braceTextBounds(element), midpoint = points[Math.floor(points.length / 2)]!
+        const metadata = `openWorkflowShape="${element.shape}" openWorkflowX="${element.x}" openWorkflowY="${element.y}" openWorkflowWidth="${element.width}" openWorkflowHeight="${element.height}" openWorkflowCompatibility="外部软件显示为开放线条；括弧编辑与绑定语义依赖本软件元数据"`
+        return `<mxCell ${attributes} ${metadata} edge="1" value="${xml(element.text)}" style="${xml(`${writeStyle({ ...element.style, fill: 'none' })}endArrow=none;startArrow=none;`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', points[0]!)}${point('targetPoint', points.at(-1)!)}<Array as="points">${points.slice(1, -1).map(value => `<mxPoint x="${value.x}" y="${value.y}"/>`).join('')}</Array><mxPoint x="${text.x + text.width / 2 - midpoint.x}" y="${text.y + text.height / 2 - midpoint.y}" as="offset"/></mxGeometry></mxCell>`
+      }
       const shape = element.shape === 'diamond' ? 'rhombus' : element.shape === 'text' ? 'text' : element.shape
       const imageData = element.shape === 'image' ? safeImage(element.imageData) : undefined
       if (element.shape === 'image' && !imageData) throw new Error('导出图片必须为不超过 10 MB 的内嵌 PNG/JPEG/WebP。')

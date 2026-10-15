@@ -3,6 +3,11 @@ import { nextTick, onMounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { BOARD_TEMPLATES } from '../core/board-templates.ts'
 
+const templates = [
+  { id: 'flow', title: '流程图', description: '用节点、分支和连线表达处理步骤。', icon: 'flow' },
+  { id: 'board', title: '白板', description: '用便签收集想法，自由组合与连接。', icon: 'board' },
+  ...BOARD_TEMPLATES,
+]
 const emit = defineEmits<{ insert: [templateId: string]; close: [] }>()
 const panel = ref<HTMLElement>()
 let finished = false
@@ -24,10 +29,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section ref="panel" class="board-template-panel" role="region" aria-label="白板模板" data-testid="board-template-panel" @keydown="keydown" @pointerdown.stop>
-    <header><div><AppIcon name="templates" :size="17"/><strong>白板模板</strong></div><button type="button" class="board-template-close" title="关闭白板模板" aria-label="关闭白板模板" @click="close"><AppIcon name="close" :size="16"/></button></header>
-    <p>插入一份可编辑的模板，继续在当前白板创作。</p>
-    <div class="board-template-cards"><button v-for="template in BOARD_TEMPLATES" :key="template.id" type="button" :data-board-template="template.id" :aria-label="`插入${template.title}模板`" @click="insert(template.id)"><span class="board-template-icon"><AppIcon :name="template.icon" :size="22"/></span><span class="board-template-copy"><strong>{{ template.title }}</strong><small>{{ template.description }}</small></span><AppIcon name="plus" :size="15"/></button></div>
+  <section ref="panel" class="board-template-panel" role="region" aria-label="画布模板" data-testid="board-template-panel" @keydown="keydown" @pointerdown.stop>
+    <header><div><AppIcon name="templates" :size="17"/><strong>画布模板</strong></div><button type="button" class="board-template-close" title="关闭画布模板" aria-label="关闭画布模板" @click="close"><AppIcon name="close" :size="16"/></button></header>
+    <p>插入一份可编辑的模板，继续在当前画布创作。</p>
+    <div class="board-template-cards"><button v-for="template in templates" :key="template.id" type="button" :data-board-template="template.id" :aria-label="`插入${template.title}模板`" @click="insert(template.id)"><span class="board-template-icon"><AppIcon :name="template.icon" :size="22"/></span><span class="board-template-copy"><strong>{{ template.title }}</strong><small>{{ template.description }}</small></span><AppIcon name="plus" :size="15"/></button></div>
     <footer><AppIcon name="frame" :size="13"/><span>便签、标题和连线都可以单独修改。</span></footer>
   </section>
 </template>
