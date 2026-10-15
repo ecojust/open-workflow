@@ -5,6 +5,7 @@ import { deflateSync, strToU8 } from 'fflate'
 import { importDrawio, exportDrawio } from '../src/formats/drawio.ts'
 import { importExcalidraw, exportExcalidraw } from '../src/formats/excalidraw.ts'
 import { DEFAULT_STYLE } from '../src/core/types.ts'
+import { applyGlobalLineStyle } from '../src/core/appearance.ts'
 
 globalThis.DOMParser = class {
   parseFromString(value, mime) {
@@ -25,6 +26,38 @@ const scene = () => ({ background: '#f8fafc', grid: true, elements: [
 ] })
 const model = content => `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>${content}</root></mxGraphModel>`
 const vertex = '<mxCell id="a" value="中文节点" vertex="1" parent="1" style="ellipse;fillColor=#fed7aa;"><mxGeometry x="12" y="24" width="160" height="90" as="geometry"/></mxCell>'
+
+test('line patterns, sketch mode and future-element defaults survive both interchange formats', () => {
+  for (const strokePattern of ['solid', 'dashed', 'dotted']) {
+    const expected = applyGlobalLineStyle(scene(), { roughness: 'sketch', strokePattern, strokeWidth: 3, stroke: '#123456' })
+    for (const actual of [importDrawio(exportDrawio(expected, '风格'))[0], importExcalidraw(exportExcalidraw(expected))]) {
+      assert.deepEqual(actual.scene.defaultStyle, expected.defaultStyle)
+      for (const element of actual.scene.elements) {
+        assert.equal(element.style.roughness, 'sketch')
+        assert.equal(element.style.strokePattern, strokePattern)
+        assert.equal(element.style.dashed, strokePattern !== 'solid')
+        assert.equal(element.style.strokeWidth, 3)
+      }
+      assert.ok(actual.warnings.some(warning => warning.includes('手绘')))
+    }
+    const external = JSON.parse(exportExcalidraw(expected))
+    assert.ok(external.elements.every(element => element.roughness === 1 && element.strokeStyle === strokePattern))
+    const drawio = exportDrawio(expected, '风格')
+    assert.match(drawio, /sketch=1/)
+    if (strokePattern === 'dotted') assert.match(drawio, /dashPattern=1 3/)
+  }
+})
+
+test('external sketch and dotted styles map to native styles and custom dash spacing is disclosed', () => {
+  const drawio = importDrawio(model(vertex.replace('ellipse;', 'ellipse;sketch=1;dashed=1;dashPattern=0 5;')))[0]
+  assert.equal(drawio.scene.elements[0].style.roughness, 'sketch')
+  assert.equal(drawio.scene.elements[0].style.strokePattern, 'dotted')
+  assert.ok(drawio.warnings.some(warning => warning.includes('间隔')))
+  const excalidraw = importExcalidraw(JSON.stringify({ type: 'excalidraw', elements: [{ id: 'a', type: 'rectangle', width: 20, height: 20, roughness: 2, strokeStyle: 'dotted' }] }))
+  assert.equal(excalidraw.scene.elements[0].style.roughness, 'sketch')
+  assert.equal(excalidraw.scene.elements[0].style.strokePattern, 'dotted')
+  assert.equal(excalidraw.scene.elements[0].style.dashed, true)
+})
 
 test('draw.io native round trip retains editable nodes, IDs, edge bindings, freehand and embedded images', () => {
   const expected = scene()

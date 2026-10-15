@@ -53,6 +53,7 @@ let modalResolve: ((value: string) => void) | undefined
 let previousFocus: HTMLElement | null = null
 let unlisten: (() => void) | undefined
 let closing = false
+let saveCompletion: Promise<void> | undefined
 
 function kindName(kind: DocumentKind): string { return { flow: '流程图', board: '自由白板', mermaid: 'Mermaid' }[kind] }
 function kindIcon(kind: DocumentKind): string { return { flow: 'flow', board: 'board', mermaid: 'code' }[kind] }
@@ -126,10 +127,19 @@ async function historyAction(action: 'undo' | 'redo') {
   if (restored) { restored.updatedAt = new Date().toISOString(); tab.document = restored; tab.revision++; scheduleDraft(tab); status.value = action === 'undo' ? '已撤销' : '已重做' }
 }
 async function save(tab = active.value, saveAs = false): Promise<boolean> {
-  if (!tab || busy.value) return false
-  await flush(); const snapshot = clone(tab.document); const snapshotKey = contentKey(snapshot)
+  if (!tab || (busy.value && (!saveCompletion || busy.value !== '正在保存…'))) return false
+  // Reserve the queue synchronously, before flushing can yield. A second Ctrl+S
+  // must wait for the first save's draft write rather than discard the request.
+  const previous = saveCompletion
+  let complete!: () => void
+  const completion = new Promise<void>(resolve => { complete = resolve })
+  saveCompletion = completion
   busy.value = '正在保存…'; menu.value = null
   try {
+    await previous
+    if (!tabs.value.some(current => current.document.id === tab.document.id)) return false
+    await flush()
+    const snapshot = clone(tab.document); const snapshotKey = contentKey(snapshot)
     const bytes = documentBytes(snapshot)
     if (native) {
       const result = await saveNativeFile({ suggestedName: `${safeFilename(snapshot.title)}.owflow`, bytes, path: saveAs ? undefined : tab.path, expectedStamp: saveAs ? undefined : tab.stamp })
@@ -141,13 +151,21 @@ async function save(tab = active.value, saveAs = false): Promise<boolean> {
       message('已下载 .owflow 文件；本地草稿也会保留。')
     }
     tab.savedKey = snapshotKey; await persist(tab); return true
-  } catch (error) { errorMessage(error); return false } finally { busy.value = '' }
+  } catch (error) { errorMessage(error); return false } finally {
+    if (saveCompletion === completion) {
+      saveCompletion = undefined
+      if (busy.value === '正在保存…') busy.value = ''
+    }
+    complete()
+  }
 }
-async function exportAs(format: ExportFormat) {
+async function exportAs(format: ExportFormat, selection?: Scene) {
   await flush(); const tab = active.value; if (!tab || busy.value) return
   busy.value = '正在导出…'; menu.value = null
   try {
-    const output = await exportDocument(clone(tab.document), format)
+    const snapshot = clone(tab.document)
+    if (selection) { snapshot.scene = clone(selection); snapshot.title = `${snapshot.title} · 选区`.slice(0, 200) }
+    const output = await exportDocument(snapshot, format)
     if (native) { const result = await saveNativeFile({ suggestedName: output.name, bytes: output.bytes }); if (!result) return }
     else downloadBytes(output.name, output.bytes, output.mime)
     message(`已导出 ${output.name}`)
@@ -400,7 +418,7 @@ onBeforeUnmount(() => {
         <button class="tab-rename" title="重命名当前文档" aria-label="重命名当前文档" @click="rename(active)"><AppIcon name="rename" :size="15"/></button>
       </div>
       <MermaidEditor v-if="active.document.kind === 'mermaid'" :key="active.document.id" ref="editor" :source="active.document.source" :theme="effectiveTheme" @change="changeSource" @create-flow="copyMermaid" @status="status = $event"/>
-      <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event"/>
+      <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event" @export="exportAs"/>
     </main>
 
     <footer class="status-bar"><span class="status-info">{{ home ? '流程图 · 自由白板 · Mermaid' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error' }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>

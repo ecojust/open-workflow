@@ -1,5 +1,6 @@
 import { DEFAULT_STYLE, clone, emptyScene, newId } from './types.ts'
 import type { DocumentKind, ElementStyle, Scene, SceneElement, WorkflowDocument } from './types.ts'
+import { resolveStrokePattern, sceneDefaultStyle } from './appearance.ts'
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 const MAX_ELEMENTS = 5000
@@ -30,13 +31,15 @@ export function safeImage(value: unknown): value is string {
   const bytes = Math.floor(body.length * 3 / 4) - (body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0)
   return body.length % 4 === 0 && bytes <= 10 * 1024 * 1024
 }
-function style(value: unknown): ElementStyle {
+export function validateElementStyle(value: unknown): ElementStyle {
   const input = value ? object(value) : DEFAULT_STYLE
+  const strokePattern = input.strokePattern === undefined ? (input.dashed === true ? 'dashed' : 'solid') : choice(input.strokePattern, ['solid', 'dashed', 'dotted'] as const, '线型')
   return {
     stroke: safeColor(input.stroke, DEFAULT_STYLE.stroke), fill: safeColor(input.fill, DEFAULT_STYLE.fill),
     strokeWidth: number(input.strokeWidth ?? 2, '线宽', 0, 100), fontSize: number(input.fontSize ?? 16, '字号', 1, 500),
     textAlign: choice(input.textAlign ?? 'center', ['left', 'center', 'right'], '文字对齐'),
-    opacity: number(input.opacity ?? 1, '透明度', 0, 1), dashed: input.dashed === true,
+    opacity: number(input.opacity ?? 1, '透明度', 0, 1), dashed: strokePattern !== 'solid', strokePattern,
+    roughness: choice(input.roughness ?? 'clean', ['clean', 'sketch'] as const, '线条外观'),
   }
 }
 export function validateScene(value: unknown): Scene {
@@ -49,7 +52,7 @@ export function validateScene(value: unknown): Scene {
     const id = string(e.id, '元素 ID', 512)
     if (!id || ids.has(id)) throw new Error('画布包含空白或重复的元素 ID。')
     ids.add(id)
-    const base = { id, style: style(e.style), locked: e.locked === true }
+    const base = { id, style: validateElementStyle(e.style), locked: e.locked === true }
     if (e.type === 'shape') {
       const shape = choice(e.shape, SHAPES, '图形')
       if (shape === 'image' && !safeImage(e.imageData)) throw new Error('图片必须是内嵌 PNG、JPEG 或 WebP（不超过 10 MB）。')
@@ -72,7 +75,7 @@ export function validateScene(value: unknown): Scene {
   for (const e of elements) if (e.type === 'edge') {
     for (const p of [e.from, e.to]) if (p.nodeId && !shapeIds.has(p.nodeId)) throw new Error('连线引用了不存在的图形。')
   }
-  return { elements, background: safeColor(input.background), grid: input.grid !== false }
+  return { elements, background: safeColor(input.background), grid: input.grid !== false, defaultStyle: validateElementStyle(input.defaultStyle) }
 }
 
 export function parseDocument(text: string): WorkflowDocument {
@@ -108,14 +111,14 @@ export function serializeDocument(doc: WorkflowDocument): string {
 }
 export function contentKey(doc: WorkflowDocument): string {
   // Object insertion order and non-document metadata must not make a saved file dirty.
+  const styleKey = (s: ElementStyle) => [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, resolveStrokePattern(s), s.roughness ?? 'clean']
   const elements = doc.scene.elements.map(element => {
-    const s = element.style
-    const base = [element.id, element.type, element.locked, [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, s.dashed]]
+    const base = [element.id, element.type, element.locked, styleKey(element.style)]
     if (element.type === 'shape') return [...base, element.shape, element.x, element.y, element.width, element.height, element.text, element.imageData ?? null]
     if (element.type === 'edge') return [...base, [element.from.x, element.from.y, element.from.nodeId ?? null], [element.to.x, element.to.y, element.to.nodeId ?? null], element.label, element.arrow, element.route]
     return [...base, element.points.map(point => [point.x, point.y])]
   })
-  return JSON.stringify([doc.title, doc.kind, doc.scene.background, doc.scene.grid, elements, doc.source])
+  return JSON.stringify([doc.title, doc.kind, doc.scene.background, doc.scene.grid, styleKey(sceneDefaultStyle(doc.scene)), elements, doc.source])
 }
 export const MERMAID_SAMPLE = `flowchart TD
   start([开始]) --> idea[整理想法]

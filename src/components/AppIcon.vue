@@ -1,6 +1,8 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 })
 const paths: Record<string, string> = {
+  cursor: 'M4 3l6 17 3-7 7-3z', hand: 'M8 13V5a2 2 0 0 1 4 0v6-8a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v9c0 4-3 7-7 7h-1c-2 0-4-1-5-3l-4-6a2 2 0 0 1 3-2l2 2z',
+  rectangle: 'M4 5h16v14H4z', ellipse: 'M21 12a9 7 0 1 1-18 0 9 7 0 0 1 18 0', diamond: 'm12 3 9 9-9 9-9-9z', connector: 'M4 20 20 4M10 4h10v10', text: 'M4 5h16M12 5v15M8 20h8M4 5v3m16-3v3', note: 'M4 3h16v12l-5 6H4zM15 21v-6h5M8 8h8m-8 4h5', pen: 'm15 3 6 6L8 22H2v-6zM12 6l6 6', image: 'M3 4h18v16H3zM3 16l6-6 5 5 3-3 4 4M17 8h.01', style: 'M3 7c4-6 7 6 11 0s7 0 7 0M3 17h18', sliders: 'M3 6h5m4 0h9M3 12h11m4 0h3M3 18h3m4 0h11M8 3v6m6 0v6M6 15v6', shapes: 'M3 3h8v8H3zM16 3l5 8H12zM21 18a4 4 0 1 1-8 0 4 4 0 0 1 8 0M3 15h7v7H3z',
   plus: 'M12 5v14M5 12h14', folder: 'M3 7h7l2-3h9v15H3zM3 7V4h6l3 3', save: 'M5 3h12l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8',
   export: 'M12 3v12m-4-8 4-4 4 4M4 14v7h16v-7', undo: 'M9 4 3 10l6 6M3 10h10a7 7 0 0 1 7 7v3', redo: 'm15 4 6 6-6 6m6-6H11a7 7 0 0 0-7 7v3',
   home: 'm3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7', close: 'm6 6 12 12M6 18 18 6', chevron: 'm6 9 6 6 6-6',

@@ -2,19 +2,23 @@
 
 把流程图、自由白板与文字绘图放在同一个本地工作台。
 
-Open Workflow 0.1.0 是自研编辑器的第一版：使用自己的场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换。Vue 3 负责应用界面，Tauri 2 提供桌面外壳；没有内嵌 draw.io、Excalidraw、Mermaid 或 Vue Flow 编辑引擎。界面布局参考 [Open Office](https://github.com/ecojust/open-office)，研究方法和 REA 分析记录见 [RESEARCH.md](docs/RESEARCH.md)。
+Open Workflow 0.1.0 正在开发中，暂未发布正式安装包。编辑器使用自己的场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换。Vue 3 负责应用界面，Tauri 2 提供桌面外壳；没有内嵌 draw.io、Excalidraw、Mermaid 或 Vue Flow 编辑引擎。界面布局参考 [Open Office](https://github.com/ecojust/open-office)，研究方法和 REA 分析记录见 [RESEARCH.md](docs/RESEARCH.md)。
 
 ![Open Workflow 工作台](docs/screenshots/home.png)
 
 ## 当前功能
 
-- **流程图**：矩形、椭圆、菱形、文字、便签；绑定节点的直线/正交连线；拖动、缩放图形、框选、复制、锁定、层级和自动布局。
-- **自由白板**：共享同一套画布，支持手绘笔迹、便签、本地 PNG/JPEG/WebP 图片、平移缩放与属性调整。
+- **流程图**：矩形、椭圆、菱形、文字、便签与自动布局；直线/正交连线靠近图形真实边缘时自动吸附，支持拖动端点重新连接，图形移动或缩放后连线跟随。
+- **自由画布**：流程图和白板共享平移缩放、自适应点阵、手绘笔迹、便签与本地 PNG/JPEG/WebP 图片。工具栏悬浮在画布上方，图形素材库默认收起。
+- **线条外观**：整洁/手绘、实线/虚线/点线、线宽和颜色可全局调整，也可独立修改选中图形；全局设置同时应用于现有元素与之后创建的元素，明确包含锁定元素。
+- **直接编辑**：双击图形或连线修改文字，选择工具下双击空白处创建文字；右键菜单提供文字编辑、复制、锁定、删除，以及置顶、置底、上移一层、下移一层。
 - **Mermaid 工作区**：自己解析基础流程图和时序图，显示预览、行号及语法错误；可创建独立的流程图副本继续编辑。支持范围见 [格式说明](docs/FORMATS.md#mermaid-子集)。
 - **统一工作台**：多文档标签、重命名、最近文档搜索、浅色/深色/跟随系统外观，以及本地草稿恢复。
-- **文件与导出**：原生 `.owflow`；基础 draw.io、Excalidraw、Mermaid 导入；SVG、PNG、draw.io、Excalidraw 导出。导入时的原始文本可单独取回。
+- **文件与导出**：原生 `.owflow`；基础 draw.io、Excalidraw、Mermaid 导入；整图或选区 SVG/PNG 导出，以及 draw.io、Excalidraw 文件导出。导入时的原始文本可单独取回。
 
 ![流程图编辑界面](docs/screenshots/flow.png)
+
+[查看全局线条设置](docs/screenshots/flow-style.png) · [查看右键菜单](docs/screenshots/flow-context.png)
 
 ## 运行
 
@@ -40,9 +44,9 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-`test:browser` 使用真实 Chromium，并在需要时启动开发服务。已有 Chromium 可通过 `CHROMIUM_EXECUTABLE` 指定；`BASE_URL` 可指定已启动的服务。截图与结果默认写入 `/tmp/open-workflow-browser`，可通过 `BROWSER_ARTIFACTS` 更改。Linux 测试环境缺少浏览器系统库时，可使用 `npx playwright install --with-deps chromium`。
+`test:browser` 使用真实 Chromium，并在需要时启动开发服务。已有 Chromium 可通过 `CHROMIUM_EXECUTABLE` 指定；`BASE_URL` 可指定已启动的服务。基础交互及画布细节测试的截图与结果默认分别写入 `/tmp/open-workflow-browser`、`/tmp/open-workflow-refinements`，可通过 `BROWSER_ARTIFACTS` 更改。Linux 测试环境缺少浏览器系统库时，可使用 `npx playwright install --with-deps chromium`。
 
-桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。Windows x64、Mac Apple Silicon 与 Mac Intel 的正式安装包见 [最新 Release](https://github.com/ecojust/open-workflow/releases/latest)。开发构建也会将产物保存在 Actions artifacts；正式发布会重新校验构建来源与文件摘要，流程见 [发布约定](.github/RELEASING.md)。
+桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。仓库配置了 Windows x64、Mac Apple Silicon 与 Mac Intel 构建，开发产物可保存在 Actions artifacts。当前尚无正式 Release 安装包；后续发布流程见 [发布约定](.github/RELEASING.md)。
 
 ## 保存到哪里
 
@@ -66,9 +70,13 @@ npm run test:browser
 | 多选 / 框选 | `Shift` 点击 / 在空白处拖动 |
 | 复制 / 粘贴 / 创建副本 | `Ctrl+C` / `Ctrl+V` / `Ctrl+D`，作用于当前编辑器内 |
 | 删除 / 微调位置 | `Delete` 或 `Backspace` / 方向键，按住 `Shift` 移动 10 个画布单位 |
-| 编辑图形文字 | 双击图形或选中后按 `Enter` |
+| 编辑文字 / 新建文字 | 双击图形或连线；选中后按 `Enter`；选择工具下双击空白处新建 |
+| 重新连接端点 | 选中连线，拖动端点圆柄；距图形真实轮廓 14 个屏幕像素内自动吸附 |
+| 图层、锁定与图像导出 | 右键打开菜单；选中元素后可导出选区 SVG/PNG |
 | 选择 / 平移 / 连线 / 画笔 | `V` / `H` / `L` / `P` |
 | 矩形 / 椭圆 / 菱形 / 文字 / 便签 | `R` / `O` / `D` / `T` / `N` |
+
+全局线条设置只统一本次调整的属性，并保存为后续创建元素的默认值。单独调整图形不会改变其他元素；再次修改同一全局属性时，会覆盖各元素此前的独立设置，包含锁定元素。普通移动、文字编辑、图层和删除操作仍遵守锁定状态。
 
 ## 第一版的边界
 

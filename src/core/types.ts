@@ -8,6 +8,8 @@ export interface ElementStyle {
   textAlign: 'left' | 'center' | 'right'
   opacity: number
   dashed: boolean
+  roughness?: 'clean' | 'sketch'
+  strokePattern?: 'solid' | 'dashed' | 'dotted'
 }
 export interface ShapeElement {
   id: string
@@ -42,7 +44,7 @@ export interface StrokeElement {
   locked: boolean
 }
 export type SceneElement = ShapeElement | EdgeElement | StrokeElement
-export interface Scene { elements: SceneElement[]; background: string; grid: boolean }
+export interface Scene { elements: SceneElement[]; background: string; grid: boolean; defaultStyle?: ElementStyle }
 export interface WorkflowDocument {
   format: 'open-workflow'
   version: 1
@@ -60,8 +62,8 @@ export interface ImportedScene { title: string; scene: Scene; warnings: string[]
 export interface EditorHandle { flush: () => void | Promise<void> }
 export const DEFAULT_STYLE: ElementStyle = {
   stroke: '#334155', fill: '#ffffff', strokeWidth: 2, fontSize: 16,
-  textAlign: 'center', opacity: 1, dashed: false,
+  textAlign: 'center', opacity: 1, dashed: false, roughness: 'clean', strokePattern: 'solid',
 }
 export function newId(prefix = 'e'): string { return `${prefix}-${crypto.randomUUID()}` }
-export function emptyScene(): Scene { return { elements: [], background: '#ffffff', grid: true } }
+export function emptyScene(): Scene { return { elements: [], background: '#ffffff', grid: true, defaultStyle: { ...DEFAULT_STYLE } } }
 export function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }

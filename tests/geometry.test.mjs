@@ -84,7 +84,7 @@ test('SVG supports embedded raster images only and keeps stroke and edge styles'
   assert.equal(safeImageData('data:image/svg+xml;base64,PHN2Zz4='), false)
   assert.equal(safeImageData('data:image/png;base64,AAAA'), true)
   assert.equal(safeImageData('data:image/jpeg;base64,AAAA" onload="evil'), false)
-  const ink = { id: 'ink', type: 'stroke', points: [{ x: 10, y: 20 }, { x: 70, y: 80 }], style: { ...DEFAULT_STYLE, stroke: '#aa2233', strokeWidth: 5, dashed: true, opacity: 0.5 }, locked: false }
+  const ink = { id: 'ink', type: 'stroke', points: [{ x: 10, y: 20 }, { x: 70, y: 80 }], style: { ...DEFAULT_STYLE, stroke: '#aa2233', strokeWidth: 5, strokePattern: 'dashed', dashed: true, opacity: 0.5 }, locked: false }
   const image = { ...shape('image'), shape: 'image', imageData: 'data:image/png;base64,AAAA' }
   const svg = sceneToSvg(scene([ink, image]), { background: false })
   assert.ok(svg.includes('stroke="#aa2233"') && svg.includes('stroke-width="5"') && svg.includes('stroke-dasharray="8 5"') && svg.includes('opacity="0.5"'))

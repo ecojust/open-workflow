@@ -16,7 +16,7 @@ const MAX_NODES = 400, MAX_EDGES = 800
 const ID = '[A-Za-z0-9_\\u0080-\\uFFFF]+(?:[-.][A-Za-z0-9_\\u0080-\\uFFFF]+)*'
 const idAtStart = new RegExp(`^${ID}`)
 const fail = (message: string, statement: Statement, column = 1): never => { throw new MermaidSyntaxError(message, statement.line, column) }
-const style = (changes: Partial<ElementStyle> = {}): ElementStyle => ({ ...DEFAULT_STYLE, ...changes })
+const style = (changes: Partial<ElementStyle> = {}): ElementStyle => ({ ...DEFAULT_STYLE, ...changes, strokePattern: changes.strokePattern ?? (changes.dashed ? 'dashed' : 'solid') })
 
 /** Semicolons/comments are separators only outside labels, preserving their original line numbers. */
 function statements(source: string): Statement[] {

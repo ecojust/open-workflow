@@ -1,6 +1,8 @@
 import { Inflate, strFromU8 } from 'fflate'
 import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, type Scene, type SceneElement, type ShapeElement } from '../core/types.ts'
 import { edgePoints } from '../core/geometry.ts'
+import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
+import { validateElementStyle } from '../core/documents.ts'
 
 const MAX_TEXT = 20 * 1024 * 1024
 const MAX_ELEMENTS = 5000
@@ -67,12 +69,17 @@ function color(value: string | undefined, fallback: string, warnings: Set<string
 }
 
 function readStyle(map: Record<string, string>, warnings: Set<string>): ElementStyle {
-  const supported = new Set(['shape', 'ellipse', 'rhombus', 'text', 'group', 'strokeColor', 'fillColor', 'fontColor', 'strokeWidth', 'fontSize', 'align', 'opacity', 'dashed', 'rotation', 'gradientColor', 'shadow', 'rounded', 'fontStyle', 'image', 'movable', 'exitX', 'exitY', 'entryX', 'entryY', 'edgeStyle', 'curved', 'startArrow', 'endArrow', 'html', 'whiteSpace'])
+  const supported = new Set(['shape', 'ellipse', 'rhombus', 'text', 'group', 'strokeColor', 'fillColor', 'fontColor', 'strokeWidth', 'fontSize', 'align', 'opacity', 'dashed', 'dashPattern', 'sketch', 'rotation', 'gradientColor', 'shadow', 'rounded', 'fontStyle', 'image', 'movable', 'exitX', 'exitY', 'entryX', 'entryY', 'edgeStyle', 'curved', 'startArrow', 'endArrow', 'html', 'whiteSpace'])
   const unknown = Object.keys(map).filter(key => !supported.has(key))
   if (unknown.length) warnings.add(`部分样式暂不支持，已简化：${unknown.slice(0, 8).join('、')}${unknown.length > 8 ? '等' : ''}。`)
   if (Number(map.rotation || 0)) warnings.add('旋转图形已转为未旋转的图形，位置可能与原图不同。')
   if (map.gradientColor || map.shadow === '1' || map.rounded === '1' || Number(map.fontStyle || 0)) warnings.add('渐变、阴影、圆角及特殊字体样式已简化。')
   if (map.fontColor && map.strokeColor && map.fontColor !== map.strokeColor) warnings.add('独立的文字颜色已与图形线条颜色统一。')
+  const pattern = map.dashPattern?.trim().split(/\s+/).map(Number)
+  const dotted = pattern?.length === 2 && pattern.every(Number.isFinite) && pattern[0]! >= 0 && pattern[0]! <= 1 && pattern[1]! > 0
+  const strokePattern = map.dashed !== '1' ? 'solid' : dotted ? 'dotted' : 'dashed'
+  if (map.dashed === '1' && map.dashPattern && !['1 3', '8 5'].includes(map.dashPattern.trim())) warnings.add('自定义虚线间隔已转换为最接近的虚线或点线。')
+  if (map.sketch === '1') warnings.add('手绘线条已保留，具体抖动效果可能与原图不同。')
   return {
     stroke: color(map.strokeColor, DEFAULT_STYLE.stroke, warnings),
     fill: color(map.fillColor, DEFAULT_STYLE.fill, warnings),
@@ -80,7 +87,7 @@ function readStyle(map: Record<string, string>, warnings: Set<string>): ElementS
     fontSize: Math.max(1, Math.min(500, finite(map.fontSize ?? null, DEFAULT_STYLE.fontSize))),
     textAlign: map.align === 'left' || map.align === 'right' ? map.align : 'center',
     opacity: Math.max(0, Math.min(1, finite(map.opacity ?? null, 100) / 100)),
-    dashed: map.dashed === '1',
+    dashed: strokePattern !== 'solid', strokePattern, roughness: map.sketch === '1' ? 'sketch' : 'clean',
   }
 }
 
@@ -203,7 +210,9 @@ function importModel(model: Element, title: string): ImportedScene {
     if (start && !end) [from, to] = [to, from]
     elements.push({ id: idMap.get(id)!, type: 'edge', from, to, label: plainLabel(cell.getAttribute('value') || '', warnings, map.html === '1'), arrow: start && end ? 'both' : start || end ? 'end' : 'none', route: map.edgeStyle === 'orthogonalEdgeStyle' || map.edgeStyle === 'elbowEdgeStyle' ? 'orthogonal' : 'straight', style, locked: cell.getAttribute('openWorkflowLocked') === '1' })
   }
-  return { title, scene: { elements, background: color(model.getAttribute('background') || undefined, '#ffffff', warnings), grid: model.getAttribute('grid') !== '0' }, warnings: [...warnings] }
+  const defaultStyleText = model.getAttribute('openWorkflowDefaultStyle')
+  const defaultStyle = defaultStyleText ? validateElementStyle(JSON.parse(defaultStyleText)) : undefined
+  return { title, scene: { elements, background: color(model.getAttribute('background') || undefined, '#ffffff', warnings), grid: model.getAttribute('grid') !== '0', ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
 }
 
 /** Imports a documented subset of draw.io XML. Unsupported features produce warnings. */
@@ -227,7 +236,8 @@ export function importDrawio(text: string): ImportedScene[] {
 }
 
 function writeStyle(style: ElementStyle): string {
-  return `strokeColor=${style.stroke === 'transparent' ? 'none' : style.stroke};fontColor=${style.stroke === 'transparent' ? 'none' : style.stroke};fillColor=${style.fill === 'transparent' ? 'none' : style.fill};strokeWidth=${style.strokeWidth};fontSize=${style.fontSize};align=${style.textAlign};opacity=${style.opacity * 100};dashed=${style.dashed ? 1 : 0};html=0;`
+  const pattern = resolveStrokePattern(style)
+  return `strokeColor=${style.stroke === 'transparent' ? 'none' : style.stroke};fontColor=${style.stroke === 'transparent' ? 'none' : style.stroke};fillColor=${style.fill === 'transparent' ? 'none' : style.fill};strokeWidth=${style.strokeWidth};fontSize=${style.fontSize};align=${style.textAlign};opacity=${style.opacity * 100};dashed=${pattern === 'solid' ? 0 : 1};${pattern === 'solid' ? '' : `dashPattern=${pattern === 'dotted' ? '1 3' : '8 5'};`}sketch=${style.roughness === 'sketch' ? 1 : 0};html=0;`
 }
 
 /** Exports ordinary editable mxCells; own stroke metadata preserves freehand round trips. */
@@ -252,5 +262,6 @@ export function exportDrawio(scene: Scene, title: string): string {
     const points = edgePoints(element, scene)
     return `<mxCell ${attributes} edge="1"${bindings} value="${xml(element.label)}" style="${xml(`${writeStyle(element.style)}${route}startArrow=${element.arrow === 'both' ? 'block' : 'none'};endArrow=${element.arrow === 'none' ? 'none' : 'block'};`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', points[0]!)}${point('targetPoint', points.at(-1)!)}</mxGeometry></mxCell>`
   }).join('')
-  return `<?xml version="1.0" encoding="UTF-8"?><mxfile host="open-workflow" version="1"><diagram id="page-1" name="${xml(title)}"><mxGraphModel grid="${scene.grid ? 1 : 0}" background="${xml(scene.background)}"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${elements}</root></mxGraphModel></diagram></mxfile>`
+  const defaults = scene.defaultStyle ? ` openWorkflowDefaultStyle="${xml(JSON.stringify(sceneDefaultStyle(scene)))}"` : ''
+  return `<?xml version="1.0" encoding="UTF-8"?><mxfile host="open-workflow" version="1"><diagram id="page-1" name="${xml(title)}"><mxGraphModel grid="${scene.grid ? 1 : 0}" background="${xml(scene.background)}"${defaults}><root><mxCell id="0"/><mxCell id="1" parent="0"/>${elements}</root></mxGraphModel></diagram></mxfile>`
 }

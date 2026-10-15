@@ -1,7 +1,34 @@
-import { parseDocument, serializeDocument } from './documents.ts'
+import { contentKey, parseDocument, serializeDocument } from './documents.ts'
 import type { WorkflowDocument } from './types.ts'
 
 export interface DraftRecord { id: string; document: WorkflowDocument; savedKey: string | null; lastOpened: number }
+
+/** Upgrade only a provably unchanged pre-appearance saved snapshot. */
+function migrateSavedKey(document: WorkflowDocument, savedKey: unknown): string | null {
+  if (typeof savedKey !== 'string') return null
+  const currentKey = contentKey(document)
+  if (savedKey === currentKey) return savedKey
+  const elements = document.scene.elements.map(element => {
+    const s = element.style
+    const base = [element.id, element.type, element.locked, [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, s.dashed]]
+    if (element.type === 'shape') return [...base, element.shape, element.x, element.y, element.width, element.height, element.text, element.imageData ?? null]
+    if (element.type === 'edge') return [...base, [element.from.x, element.from.y, element.from.nodeId ?? null], [element.to.x, element.to.y, element.to.nodeId ?? null], element.label, element.arrow, element.route]
+    return [...base, element.points.map(point => [point.x, point.y])]
+  })
+  const legacyKey = JSON.stringify([document.title, document.kind, document.scene.background, document.scene.grid, elements, document.source])
+  if (savedKey !== legacyKey) return savedKey
+  // The old key did not cover defaultStyle, roughness or strokePattern. A draft
+  // modified with those features must remain dirty even if its old fields match.
+  const legacyScene = {
+    background: document.scene.background, grid: document.scene.grid,
+    elements: document.scene.elements.map(element => {
+      const { roughness: _roughness, strokePattern: _strokePattern, ...style } = element.style
+      return { ...element, style }
+    }),
+  }
+  return contentKey({ ...document, scene: legacyScene }) === currentKey ? currentKey : savedKey
+}
+
 const database = 'open-workflow-v1'
 let connection: Promise<IDBDatabase> | undefined
 function openDatabase(): Promise<IDBDatabase> {
@@ -43,7 +70,7 @@ export async function readDrafts(): Promise<{ records: DraftRecord[]; skipped: n
   for (const entry of raw) {
     try {
       const document = parseDocument(JSON.stringify(entry.document))
-      records.push({ id: document.id, document, savedKey: typeof entry.savedKey === 'string' ? entry.savedKey : null, lastOpened: Number(entry.lastOpened) || 0 })
+      records.push({ id: document.id, document, savedKey: migrateSavedKey(document, entry.savedKey), lastOpened: Number(entry.lastOpened) || 0 })
     } catch { skipped++ }
   }
   return { records: records.sort((a, b) => b.lastOpened - a.lastOpened), skipped }

@@ -1,5 +1,7 @@
 import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, type Scene, type SceneElement, type ShapeElement } from '../core/types.ts'
 import { edgePoints } from '../core/geometry.ts'
+import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
+import { validateElementStyle } from '../core/documents.ts'
 
 type Json = Record<string, unknown>
 const isObject = (value: unknown): value is Json => Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -31,8 +33,12 @@ function styleOf(element: Json, warnings: Set<string>): ElementStyle {
   if (finite(element.angle) !== 0) warnings.add('旋转图形已转为未旋转的图形，位置可能与原图不同。')
   if (Array.isArray(element.groupIds) && element.groupIds.length) warnings.add('分组关系不保留；图形的世界坐标得到保留。')
   if (element.frameId) warnings.add('框架与裁剪关系不保留。')
-  if ((typeof element.roughness === 'number' && element.roughness > 0) || (element.fillStyle && element.fillStyle !== 'solid')) warnings.add('手绘抖动和纹理填充已转换为普通线条与纯色填充。')
-  if (element.roundness || element.strokeStyle === 'dotted' || element.fontFamily) warnings.add('圆角、点线和字体外观可能与原图不同。')
+  const roughness = finite(element.roughness) > 0 ? 'sketch' : 'clean'
+  const strokePattern = element.strokeStyle === 'dashed' || element.strokeStyle === 'dotted' ? element.strokeStyle : 'solid'
+  if (roughness === 'sketch') warnings.add('手绘线条已保留，抖动强度和具体笔迹可能与原图不同。')
+  if (element.fillStyle && element.fillStyle !== 'solid') warnings.add('纹理填充已转换为纯色填充。')
+  if (element.roundness || element.fontFamily) warnings.add('圆角和字体外观可能与原图不同。')
+  if (element.strokeStyle && !['solid', 'dashed', 'dotted'].includes(String(element.strokeStyle))) warnings.add('不支持的线型已转换为实线。')
   return {
     stroke: color(element.strokeColor, DEFAULT_STYLE.stroke, warnings),
     fill: color(element.backgroundColor, 'transparent', warnings),
@@ -40,7 +46,7 @@ function styleOf(element: Json, warnings: Set<string>): ElementStyle {
     fontSize: Math.max(1, Math.min(500, finite(element.fontSize, DEFAULT_STYLE.fontSize))),
     textAlign: element.textAlign === 'left' || element.textAlign === 'right' ? element.textAlign : 'center',
     opacity: Math.max(0, Math.min(1, finite(element.opacity, 100) / 100)),
-    dashed: element.strokeStyle === 'dashed' || element.strokeStyle === 'dotted',
+    dashed: strokePattern !== 'solid', strokePattern, roughness,
   }
 }
 
@@ -137,7 +143,9 @@ export function importExcalidraw(text: string): ImportedScene {
   }
   if (elements.length > 5000) throw new Error('单页最多支持 5000 个转换后的图形。')
   const appState = isObject(data.appState) ? data.appState : {}
-  return { title: typeof appState.name === 'string' && appState.name ? appState.name : '导入白板', scene: { elements, background: color(appState.viewBackgroundColor, '#ffffff', warnings), grid: typeof appState.gridSize === 'number' && appState.gridSize > 0 }, warnings: [...warnings] }
+  const native = isObject(data.openWorkflow) ? data.openWorkflow : undefined
+  const defaultStyle = native?.defaultStyle ? validateElementStyle(native.defaultStyle) : undefined
+  return { title: typeof appState.name === 'string' && appState.name ? appState.name : '导入白板', scene: { elements, background: color(appState.viewBackgroundColor, '#ffffff', warnings), grid: typeof appState.gridSize === 'number' && appState.gridSize > 0, ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
 }
 
 /** Emits ordinary Excalidraw JSON and image files, without bundling its editor. */
@@ -148,7 +156,7 @@ export function exportExcalidraw(scene: Scene): string {
   const takenIds = new Set(scene.elements.map(element => element.id))
   function labelId(id: string): string { let result = `${id}__label`; while (takenIds.has(result)) result += '_'; takenIds.add(result); return result }
   function base(element: SceneElement): Json {
-    return { id: element.id, angle: 0, strokeColor: element.style.stroke, backgroundColor: element.style.fill, fillStyle: 'solid', strokeWidth: element.style.strokeWidth, strokeStyle: element.style.dashed ? 'dashed' : 'solid', roughness: 0, opacity: element.style.opacity * 100, groupIds: [], frameId: null, roundness: null, seed: 1, version: 1, versionNonce: 0, isDeleted: false, boundElements: [], updated, link: null, locked: element.locked }
+    return { id: element.id, angle: 0, strokeColor: element.style.stroke, backgroundColor: element.style.fill, fillStyle: 'solid', strokeWidth: element.style.strokeWidth, strokeStyle: resolveStrokePattern(element.style), roughness: element.style.roughness === 'sketch' ? 1 : 0, opacity: element.style.opacity * 100, groupIds: [], frameId: null, roundness: null, seed: 1, version: 1, versionNonce: 0, isDeleted: false, boundElements: [], updated, link: null, locked: element.locked }
   }
   function textElement(id: string, value: string, x: number, y: number, width: number, height: number, element: SceneElement, containerId: string | null): Json {
     return { ...base(element), id, type: 'text', x, y, width, height, text: value, originalText: value, fontSize: element.style.fontSize, fontFamily: 2, textAlign: element.style.textAlign, verticalAlign: containerId ? 'middle' : 'top', containerId, autoResize: false, lineHeight: 1.25, backgroundColor: 'transparent' }
@@ -193,5 +201,5 @@ export function exportExcalidraw(scene: Scene): string {
       }
     }
   }
-  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'https://github.com/ecojust/open-workflow', elements, appState: { viewBackgroundColor: scene.background, gridSize: scene.grid ? 20 : null }, files }, null, 2)
+  return JSON.stringify({ type: 'excalidraw', version: 2, source: 'https://github.com/ecojust/open-workflow', elements, appState: { viewBackgroundColor: scene.background, gridSize: scene.grid ? 20 : null }, files, ...(scene.defaultStyle ? { openWorkflow: { defaultStyle: sceneDefaultStyle(scene) } } : {}) }, null, 2)
 }
