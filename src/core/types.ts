@@ -14,7 +14,7 @@ export interface ElementStyle {
 export interface ShapeElement {
   id: string
   type: 'shape'
-  shape: 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'image'
+  shape: 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'image' | 'triangle' | 'hexagon' | 'star' | 'parallelogram' | 'cylinder' | 'cloud' | 'frame'
   x: number
   y: number
   width: number
@@ -23,6 +23,7 @@ export interface ShapeElement {
   imageData?: string
   style: ElementStyle
   locked: boolean
+  groupId?: string
 }
 export interface Endpoint extends Point { nodeId?: string }
 export interface EdgeElement {
@@ -35,13 +36,16 @@ export interface EdgeElement {
   route: 'straight' | 'orthogonal'
   style: ElementStyle
   locked: boolean
+  groupId?: string
 }
 export interface StrokeElement {
   id: string
   type: 'stroke'
   points: Point[]
+  closed?: boolean
   style: ElementStyle
   locked: boolean
+  groupId?: string
 }
 export type SceneElement = ShapeElement | EdgeElement | StrokeElement
 export interface Scene { elements: SceneElement[]; background: string; grid: boolean; defaultStyle?: ElementStyle }

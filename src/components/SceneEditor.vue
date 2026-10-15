@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import BoardTemplatePanel from './BoardTemplatePanel.vue'
+import { createBoardTemplate } from '../core/board-templates'
 import CanvasContextMenu from './CanvasContextMenu.vue'
 import { canvasGrid } from '../core/grid'
 import { applyGlobalLineStyle, sceneDefaultStyle, resolveStrokePattern } from '../core/appearance'
 import { findBindingTarget } from '../core/binding'
+import { expandedSelection, groupElements, ungroupElements, alignElements, distributeElements, hitTestElement, frameContents } from '../core/board-tools'
 import { selectionScene, reorderElements } from '../core/selection'
 import { clone, newId, type EdgeElement, type ElementStyle, type Point, type Scene, type SceneElement, type ShapeElement } from '../core/types'
 import { center, combineBounds, edgePoints, elementBounds, pathMidpoint, sceneBounds, snap, type Bounds } from '../core/geometry'
@@ -14,19 +17,22 @@ import { validateScene } from '../core/documents'
 
 const props = defineProps<{ scene: Scene; mode: 'flow' | 'board'; theme: 'light' | 'dark' }>()
 const emit = defineEmits<{ change: [scene: Scene, label: string]; status: [message: string]; export: [format: 'svg' | 'png', selection?: Scene] }>()
-type Tool = 'select' | 'hand' | 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'pen' | 'edge'
+type Tool = 'select' | 'hand' | ShapeElement['shape'] | 'pen' | 'highlighter' | 'eraser' | 'edge'
 const draft = ref<Scene>(clone(props.scene)), selected = ref<string[]>([]), tool = ref<Tool>('select')
 const stage = ref<HTMLDivElement>(), editor = ref<HTMLElement>(), imageInput = ref<HTMLInputElement>(), textInput = ref<HTMLTextAreaElement>(), propertyTextInput = ref<HTMLTextAreaElement>()
 const viewport = ref({ x: 0, y: 0, zoom: 1, width: 900, height: 600 }), spaceHeld = ref(false), editingId = ref<string>(), editText = ref('')
 const propertiesOpen = ref(typeof window === 'undefined' || window.innerWidth > 1000), activeStyle = ref<ElementStyle>(sceneDefaultStyle(props.scene)), snapEnabled = ref(false)
+const boardTemplatesOpen = ref(false)
 const libraryOpen = ref(false), globalStyleOpen = ref(false), bindingTarget = ref<ShapeElement>(), contextMenu = ref<{ x: number; y: number }>()
 const gridId = newId('grid'), grid = computed(() => canvasGrid(viewport.value.zoom, draft.value.background))
 const globalStyle = computed(() => sceneDefaultStyle(draft.value))
 let flushing = false, captureTarget: Element | undefined
 const pendingControls = new WeakSet<Element>()
 let observer: ResizeObserver | undefined, clipboard: SceneElement[] = [], initialFit = false, activePointerId: number | undefined, penPointBudget = 0
-let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'endpoint' | 'resize' | 'marquee'; endpoint?: 'from' | 'to'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
+let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'endpoint' | 'resize' | 'marquee' | 'erase'; movingIds?: string[]; endpoint?: 'from' | 'to'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
 const marquee = ref<Bounds>()
+const noteColors = ['#fff4ad', '#ffd7dc', '#d8f4df', '#dceafe', '#eadfff', '#ffffff']
+const alignmentOptions = [{ id: 'left', label: '左对齐' }, { id: 'center', label: '水平居中' }, { id: 'right', label: '右对齐' }, { id: 'top', label: '顶端对齐' }, { id: 'middle', label: '垂直居中' }, { id: 'bottom', label: '底端对齐' }] as const
 watch(() => props.scene, value => { if (!gesture && !editingId.value) { draft.value = clone(value); activeStyle.value = sceneDefaultStyle(value); selected.value = selected.value.filter(id => value.elements.some(e => e.id === id)) } }, { deep: true })
 const selectedElements = computed(() => draft.value.elements.filter(e => selected.value.includes(e.id)))
 const primary = computed(() => selectedElements.value.length === 1 ? selectedElements.value[0] : undefined)
@@ -35,7 +41,7 @@ const editingNode = computed(() => draft.value.elements.find((e): e is ShapeElem
 const editPosition = computed(() => {
   const node = editingNode.value; if (!node) return {}
   const v = viewport.value, bounds = node.type === 'shape' ? node : (() => { const p = pathMidpoint(edgePoints(node, draft.value)); return { x: p.x - 100, y: p.y - 32, width: 200, height: 64 } })()
-  return { left: `${(bounds.x - v.x) * v.zoom}px`, top: `${(bounds.y - v.y) * v.zoom}px`, width: `${Math.max(80, bounds.width * v.zoom)}px`, height: `${Math.max(44, bounds.height * v.zoom)}px`, fontSize: `${Math.max(10, node.style.fontSize * v.zoom)}px`, color: ['transparent', 'none'].includes(node.style.stroke.toLowerCase()) ? '#334155' : node.style.stroke, textAlign: node.style.textAlign }
+  return { left: `${(bounds.x - v.x) * v.zoom}px`, top: `${(bounds.y - v.y) * v.zoom}px`, width: `${Math.max(80, bounds.width * v.zoom)}px`, height: `${Math.max(44, (node.type === 'shape' && node.shape === 'frame' ? Math.min(node.height, Math.max(28, node.style.fontSize * 1.5 + 12)) : bounds.height) * v.zoom)}px`, fontSize: `${Math.max(10, node.style.fontSize * v.zoom)}px`, color: ['transparent', 'none'].includes(node.style.stroke.toLowerCase()) ? '#334155' : node.style.stroke, textAlign: node.style.textAlign }
 })
 const edgeHandles = computed(() => {
   if (primary.value?.type !== 'edge' || primary.value.locked) return []
@@ -48,10 +54,13 @@ const tools: { id: Tool; label: string; icon: string; shortcut?: string }[] = [
   { id: 'select', label: '选择', icon: 'cursor', shortcut: 'V' }, { id: 'hand', label: '移动画布', icon: 'hand', shortcut: 'H' },
   { id: 'rectangle', label: '矩形', icon: 'rectangle', shortcut: 'R' }, { id: 'ellipse', label: '圆形', icon: 'ellipse', shortcut: 'O' },
   { id: 'diamond', label: '判断', icon: 'diamond', shortcut: 'D' }, { id: 'edge', label: '连线', icon: 'connector', shortcut: 'L' },
-  { id: 'text', label: '文字', icon: 'text', shortcut: 'T' }, { id: 'note', label: '便签', icon: 'note', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: 'pen', shortcut: 'P' },
+  { id: 'text', label: '文字', icon: 'text', shortcut: 'T' }, { id: 'note', label: '便签', icon: 'note', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: 'pen', shortcut: 'P' }, { id: 'highlighter', label: '荧光笔', icon: 'highlighter', shortcut: 'M' }, { id: 'eraser', label: '橡皮擦', icon: 'eraser', shortcut: 'E' }, { id: 'frame', label: '分区框架', icon: 'frame', shortcut: 'F' },
 ]
 const shapePalette: { shape: ShapeElement['shape']; text: string; icon: string }[] = [
-  { shape: 'rectangle', text: '处理步骤', icon: '▭' }, { shape: 'ellipse', text: '开始 / 结束', icon: '⬭' }, { shape: 'diamond', text: '条件判断', icon: '◇' }, { shape: 'note', text: '便签', icon: '▤' }, { shape: 'text', text: '文本', icon: 'T' },
+  { shape: 'rectangle', text: '矩形', icon: 'rectangle' }, { shape: 'ellipse', text: '椭圆', icon: 'ellipse' }, { shape: 'diamond', text: '菱形', icon: 'diamond' },
+  { shape: 'triangle', text: '三角形', icon: 'triangle' }, { shape: 'hexagon', text: '六边形', icon: 'hexagon' }, { shape: 'star', text: '星形', icon: 'star' },
+  { shape: 'parallelogram', text: '平行四边形', icon: 'parallelogram' }, { shape: 'cylinder', text: '圆柱', icon: 'cylinder' }, { shape: 'cloud', text: '云形', icon: 'cloud' },
+  { shape: 'note', text: '便签', icon: 'note' }, { shape: 'text', text: '文本', icon: 'text' }, { shape: 'frame', text: '分区框架', icon: 'frame' },
 ]
 function commit(label: string): boolean {
   try {
@@ -73,12 +82,12 @@ function releaseCapture() { if (activePointerId !== undefined && captureTarget?.
 function localPoint(event: MouseEvent | PointerEvent | WheelEvent): Point { const rect = stage.value!.getBoundingClientRect(), v = viewport.value; return { x: v.x + (event.clientX - rect.left) / v.zoom, y: v.y + (event.clientY - rect.top) / v.zoom } }
 function snapped(point: Point): Point { return { x: snap(point.x, snapEnabled.value), y: snap(point.y, snapEnabled.value) } }
 function focusStage() { nextTick(() => stage.value?.focus({ preventScroll: true })) }
-function setTool(value: Tool) { flush(); bindingTarget.value = undefined; contextMenu.value = undefined; globalStyleOpen.value = false; tool.value = value; focusStage() }
+function setTool(value: Tool) { flush(); bindingTarget.value = undefined; contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; tool.value = value; if (window.innerWidth <= 800) libraryOpen.value = false; focusStage() }
 function makeShape(shape: ShapeElement['shape'], point: Point): ShapeElement {
   const style = { ...activeStyle.value }
   if (shape === 'note') { style.fill = '#fff4ad'; style.textAlign = 'left' }
-  if (shape === 'text') style.fill = 'transparent'
-  return { id: newId(), type: 'shape', shape, x: point.x, y: point.y, width: shape === 'diamond' ? 160 : 180, height: shape === 'note' ? 150 : shape === 'text' ? 54 : 86, text: shape === 'text' ? '输入文字' : shape === 'note' ? '写下你的想法' : '', style, locked: false }
+  if (shape === 'text' || shape === 'frame') style.fill = 'transparent'
+  return { id: newId(), type: 'shape', shape, x: point.x, y: point.y, width: shape === 'frame' ? 480 : shape === 'diamond' ? 160 : 180, height: shape === 'frame' ? 320 : shape === 'note' ? 150 : shape === 'text' ? 54 : 86, text: shape === 'frame' ? '分区标题' : shape === 'text' ? '输入文字' : shape === 'note' ? '写下你的想法' : '', style, locked: false }
 }
 function addShape(shape: ShapeElement['shape']) { flush(); if (!canAdd()) return; const v = viewport.value, node = makeShape(shape, snapped({ x: v.x + v.width / v.zoom / 2 - 90, y: v.y + v.height / v.zoom / 2 - 43 })); while (draft.value.elements.some(e => e.type === 'shape' && Math.abs(e.x - node.x) < 12 && Math.abs(e.y - node.y) < 12)) { node.x += 24; node.y += 24 }; draft.value.elements.push(node); selected.value = [node.id]; commit('添加图形'); focusStage() }
 function findNode(point: Point) { return findBindingTarget(draft.value, point, viewport.value.zoom) }
@@ -119,31 +128,54 @@ defineExpose({ flush, fitCanvas })
 function pointerDown(event: PointerEvent, element?: SceneElement, resize = false) {
   if (event.button !== 0 && event.button !== 1) return
   if (event.target instanceof Element && event.target.closest('.inline-text-editor')) return
-  flush(); contextMenu.value = undefined; globalStyleOpen.value = false; event.preventDefault(); event.stopPropagation(); stage.value?.focus({ preventScroll: true })
+  flush(); contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; event.preventDefault(); event.stopPropagation(); stage.value?.focus({ preventScroll: true })
   captureTarget = event.currentTarget instanceof Element ? event.currentTarget : stage.value; captureTarget?.setPointerCapture(event.pointerId)
   activePointerId = event.pointerId
   const point = localPoint(event), original = clone(draft.value)
   if (spaceHeld.value || event.button === 1 || tool.value === 'hand') { gesture = { type: 'pan', start: { x: event.clientX, y: event.clientY }, last: point, original, originalView: { x: viewport.value.x, y: viewport.value.y } }; return }
   if (resize && element?.type === 'shape' && !element.locked) { gesture = { type: 'resize', start: point, last: point, original, id: element.id }; return }
-  if (!['select', 'hand'].includes(tool.value) && !canAdd(1, tool.value === 'pen' ? 1 : 0)) { releaseCapture(); return }
+  if (!['select', 'hand', 'eraser'].includes(tool.value) && !canAdd(1, ['pen', 'highlighter'].includes(tool.value) ? 1 : 0)) { releaseCapture(); return }
+  if (tool.value === 'eraser') {
+    captureTarget = stage.value; captureTarget?.setPointerCapture(event.pointerId)
+    gesture = { type: 'erase', start: point, last: point, original }; selected.value = []; eraseAt(point); return
+  }
   if (tool.value === 'edge') {
     const node = findNode(point), from = node ? { ...center(node), nodeId: node.id } : snapped(point)
     const edge: EdgeElement = { id: newId(), type: 'edge', from, to: { ...point }, label: '', arrow: 'end', route: props.mode === 'flow' ? 'orthogonal' : 'straight', style: { ...activeStyle.value, fill: 'none' }, locked: false }
     bindingTarget.value = node; draft.value.elements.push(edge); selected.value = [edge.id]; gesture = { type: 'edge', start: point, last: point, original, id: edge.id }; return
   }
-  if (tool.value === 'pen') { const id = newId(); penPointBudget = 100000 - draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0) - 1; draft.value.elements.push({ id, type: 'stroke', points: [point], style: { ...activeStyle.value, fill: 'none' }, locked: false }); selected.value = [id]; gesture = { type: 'pen', start: point, last: point, original, id }; return }
+  if (tool.value === 'pen' || tool.value === 'highlighter') { const id = newId(); penPointBudget = 100000 - draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0) - 1; draft.value.elements.push({ id, type: 'stroke', points: [point], style: { ...activeStyle.value, fill: 'none', ...(tool.value === 'highlighter' ? { stroke: '#f4cb45', strokeWidth: Math.min(100, Math.max(14, activeStyle.value.strokeWidth * 4)), opacity: .32, roughness: 'clean' as const, strokePattern: 'solid' as const, dashed: false } : {}) }, locked: false }); selected.value = [id]; gesture = { type: 'pen', start: point, last: point, original, id }; return }
   if (!['select', 'hand'].includes(tool.value)) {
-    const node = makeShape(tool.value as ShapeElement['shape'], snapped(point)); draft.value.elements.push(node); selected.value = [node.id]; gesture = { type: 'draw', start: snapped(point), last: point, original, id: node.id }; return
+    const node = makeShape(tool.value as ShapeElement['shape'], snapped(point)); if (node.shape === 'frame') draft.value.elements.unshift(node); else draft.value.elements.push(node); selected.value = [node.id]; gesture = { type: 'draw', start: snapped(point), last: point, original, id: node.id }; return
   }
   if (element) {
-    if (event.shiftKey) { selected.value = selected.value.includes(element.id) ? selected.value.filter(id => id !== element.id) : [...selected.value, element.id] }
-    else if (!selected.value.includes(element.id)) selected.value = [element.id]
-    if (!element.locked && selected.value.includes(element.id)) gesture = { type: 'move', start: point, last: point, original }
+    const ids = event.altKey ? [element.id] : expandedSelection(draft.value, [element.id])
+    if (event.shiftKey) { const allSelected = ids.every(id => selected.value.includes(id)); selected.value = allSelected ? selected.value.filter(id => !ids.includes(id)) : [...new Set([...selected.value, ...ids])] }
+    else if (event.altKey || !selected.value.includes(element.id)) selected.value = ids
+    if (!element.locked && selected.value.includes(element.id)) {
+      const movingIds = movableSelection(draft.value)
+      gesture = { type: 'move', start: point, last: point, original, movingIds }
+    }
   } else { if (!event.shiftKey) selected.value = []; gesture = { type: 'marquee', start: point, last: point, original, additive: event.shiftKey }; marquee.value = { x: point.x, y: point.y, width: 0, height: 0 } }
 }
+function removeElements(ids: Set<string>) {
+  const original = draft.value
+  draft.value.elements = original.elements.flatMap(element => {
+    if (ids.has(element.id)) return []
+    if (element.type !== 'edge' || !((element.from.nodeId && ids.has(element.from.nodeId)) || (element.to.nodeId && ids.has(element.to.nodeId)))) return [element]
+    if (!element.locked) return []
+    const points = edgePoints(element, original), edge = clone(element)
+    if (edge.from.nodeId && ids.has(edge.from.nodeId)) edge.from = { ...points[0]! }
+    if (edge.to.nodeId && ids.has(edge.to.nodeId)) edge.to = { ...points[points.length - 1]! }
+    return [edge]
+  })
+  selected.value = selected.value.filter(id => !ids.has(id))
+}
+function eraseAt(point: Point) { const element = hitTestElement(draft.value, point, viewport.value.zoom); if (element && !element.locked) removeElements(new Set([element.id])) }
+
 function startEndpointDrag(event: PointerEvent, endpoint: 'from' | 'to') {
   const edge = primary.value; if (event.button !== 0 || edge?.type !== 'edge' || edge.locked) return
-  flush(); event.preventDefault(); event.stopPropagation(); contextMenu.value = undefined; globalStyleOpen.value = false; stage.value?.focus({ preventScroll: true })
+  flush(); event.preventDefault(); event.stopPropagation(); contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; stage.value?.focus({ preventScroll: true })
   captureTarget = event.currentTarget instanceof Element ? event.currentTarget : stage.value; captureTarget?.setPointerCapture(event.pointerId); activePointerId = event.pointerId
   const point = localPoint(event); gesture = { type: 'endpoint', endpoint, start: point, last: point, original: clone(draft.value), id: edge.id }
 }
@@ -152,16 +184,28 @@ function translateElement(element: SceneElement, dx: number, dy: number) {
   else if (element.type === 'stroke') element.points = element.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
   else { if (!element.from.nodeId) { element.from.x += dx; element.from.y += dy }; if (!element.to.nodeId) { element.to.x += dx; element.to.y += dy } }
 }
+function movableSelection(scene: Scene) {
+  const lockedGroups = new Set(scene.elements.filter(element => element.locked && element.groupId).map(element => element.groupId))
+  const contents = scene.elements.flatMap(element => selected.value.includes(element.id) && !element.locked && !(element.groupId && lockedGroups.has(element.groupId)) && element.type === 'shape' && element.shape === 'frame' ? expandedSelection(scene, frameContents(scene, element.id)) : [])
+  const ids = new Set([...selected.value, ...contents])
+  return scene.elements.filter(element => ids.has(element.id) && !element.locked && !(element.groupId && lockedGroups.has(element.groupId))).map(element => element.id)
+}
 function pointerMove(event: PointerEvent) {
   if (!gesture) { bindingTarget.value = tool.value === 'edge' ? findNode(localPoint(event)) : undefined; return }
   const point = localPoint(event), dx = point.x - gesture.start.x, dy = point.y - gesture.start.y
   if (Math.hypot(dx, dy) * viewport.value.zoom > 3) gesture.moved = true
   if (gesture.type === 'pan') { viewport.value.x = gesture.originalView!.x - (event.clientX - gesture.start.x) / viewport.value.zoom; viewport.value.y = gesture.originalView!.y - (event.clientY - gesture.start.y) / viewport.value.zoom; return }
+  if (gesture.type === 'erase') {
+    const distance = Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y), steps = Math.min(128, Math.max(1, Math.ceil(distance * viewport.value.zoom / 6)))
+    for (let index = 1; index <= steps; index++) eraseAt({ x: gesture.last.x + (point.x - gesture.last.x) * index / steps, y: gesture.last.y + (point.y - gesture.last.y) * index / steps })
+    gesture.last = point; return
+  }
   if (gesture.type === 'move') {
-    const anchor = gesture.original.elements.find(e => selected.value.includes(e.id) && !e.locked)
+    const movingIds = gesture.movingIds || movableSelection(gesture.original)
+    const anchor = gesture.original.elements.find(e => movingIds.includes(e.id) && !e.locked)
     const origin = anchor ? elementBounds(anchor) : { x: 0, y: 0 }
     const x = snap(origin.x + dx, snapEnabled.value) - origin.x, y = snap(origin.y + dy, snapEnabled.value) - origin.y
-    draft.value.elements = gesture.original.elements.map(original => { const e = clone(original); if (selected.value.includes(e.id) && !e.locked) translateElement(e, x, y); return e })
+    draft.value.elements = gesture.original.elements.map(original => { const e = clone(original); if (movingIds.includes(e.id) && !e.locked) translateElement(e, x, y); return e })
   } else if (gesture.type === 'draw' || gesture.type === 'resize') {
     const node = draft.value.elements.find((e): e is ShapeElement => e.id === gesture!.id && e.type === 'shape')!
     const p = snapped(point)
@@ -178,12 +222,12 @@ function finishGesture(openText: boolean) {
   releaseCapture()
   if (done.type === 'marquee') {
     const box = marquee.value!; const ids = draft.value.elements.filter(e => { const b = e.type === 'edge' ? elementBounds({ ...e, type: 'stroke', points: edgePoints(e, draft.value) }) : elementBounds(e); return b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height }).map(e => e.id)
-    selected.value = [...new Set([...(done.additive ? selected.value : []), ...ids])]; marquee.value = undefined; return
+    selected.value = expandedSelection(draft.value, [...new Set([...(done.additive ? selected.value : []), ...ids])]); marquee.value = undefined; return
   }
   if (done.type === 'pan') return
   if (done.type === 'endpoint' && !done.moved) { draft.value = done.original; return }
   if (done.type === 'edge' && !done.moved) { draft.value = done.original; selected.value = []; return }
-  if (JSON.stringify(done.original) !== JSON.stringify(draft.value)) commit(({ move: '移动图形', resize: '调整大小', draw: '添加图形', pen: '自由绘制', edge: '添加连线', endpoint: '调整连线连接' } as Record<string, string>)[done.type] || '编辑画布')
+  if (JSON.stringify(done.original) !== JSON.stringify(draft.value)) commit(({ move: '移动图形', resize: '调整大小', draw: '添加图形', pen: '自由绘制', edge: '添加连线', endpoint: '调整连线连接', erase: '擦除元素' } as Record<string, string>)[done.type] || '编辑画布')
   if (done.type === 'draw') { const added = draft.value.elements.find(e => e.id === done.id); tool.value = 'select'; if (openText && added?.type === 'shape' && ['text', 'note'].includes(added.shape)) startEdit(added) }
 }
 function cancelGesture() { if (gesture) draft.value = gesture.original; gesture = undefined; marquee.value = undefined; bindingTarget.value = undefined; releaseCapture() }
@@ -196,7 +240,7 @@ function fitCanvas() {
 }
 function zoomTo(next: number, anchor?: Point) { const v = viewport.value, point = anchor || { x: v.x + v.width / v.zoom / 2, y: v.y + v.height / v.zoom / 2 }, ratio = v.zoom / Math.max(0.1, Math.min(4, next)); v.x = point.x - (point.x - v.x) * ratio; v.y = point.y - (point.y - v.y) * ratio; v.zoom = Math.max(0.1, Math.min(4, next)) }
 function wheel(event: WheelEvent) { if (event.ctrlKey || event.metaKey) zoomTo(viewport.value.zoom * Math.exp(-event.deltaY * 0.002), localPoint(event)); else { viewport.value.x += event.deltaX / viewport.value.zoom; viewport.value.y += event.deltaY / viewport.value.zoom } }
-function deleteSelected() { flush(); const removable = new Set(selectedElements.value.filter(e => !e.locked).map(e => e.id)); if (!removable.size) return; draft.value.elements = draft.value.elements.filter(e => !removable.has(e.id) && !(e.type === 'edge' && ((e.from.nodeId && removable.has(e.from.nodeId)) || (e.to.nodeId && removable.has(e.to.nodeId))))); selected.value = []; commit('删除图形') }
+function deleteSelected() { flush(); const removable = new Set(selectedElements.value.filter(e => !e.locked).map(e => e.id)); if (!removable.size) return; removeElements(removable); selected.value = []; commit('删除图形') }
 function copySelected() {
   flush(); clipboard = clone(selectedElements.value)
   for (const e of clipboard) if (e.type === 'edge') { const points = edgePoints(e, draft.value); e.from = { ...e.from, ...points[0] }; e.to = { ...e.to, ...points[points.length - 1] } }
@@ -205,9 +249,10 @@ function copySelected() {
 function pasteSelected() {
   if (!clipboard.length) return
   flush(); if (!canAdd(clipboard.length, clipboard.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0))) return
+  const groups = new Map([...new Set(clipboard.flatMap(e => e.groupId ? [e.groupId] : []))].map(id => [id, newId('group')]))
   const ids = new Map(clipboard.map(e => [e.id, newId()])), shapeIds = new Set(draft.value.elements.filter(e => e.type === 'shape').map(e => e.id)), elements = clone(clipboard)
   for (const e of elements) {
-    e.id = ids.get(e.id)!; e.locked = false
+    e.id = ids.get(e.id)!; e.locked = false; if (e.groupId) e.groupId = groups.get(e.groupId)
     if (e.type === 'edge') for (const endpoint of [e.from, e.to]) if (endpoint.nodeId) { if (ids.has(endpoint.nodeId)) endpoint.nodeId = ids.get(endpoint.nodeId); else if (!shapeIds.has(endpoint.nodeId)) delete endpoint.nodeId }
     translateElement(e, 24, 24)
   }
@@ -222,6 +267,17 @@ function updateStyle(key: keyof ElementStyle, value: string | number | boolean) 
 }
 function updateText(value: string) { const e = primary.value; if (!e || e.locked) return; if (e.type === 'shape') e.text = value.slice(0, 100000); else if (e.type === 'edge') e.label = value.slice(0, 100000); commit('修改文字') }
 function updateEdge(key: 'route' | 'arrow', value: string) { const e = primary.value; if (e?.type === 'edge' && !e.locked) { if (key === 'route') e.route = value as EdgeElement['route']; else e.arrow = value as EdgeElement['arrow']; commit('修改连线') } }
+function insertBoardTemplate(id: string) {
+  flush()
+  const preset = createBoardTemplate(id), defaults = globalStyle.value
+  const scene = applyGlobalLineStyle(preset, { roughness: defaults.roughness, strokePattern: resolveStrokePattern(defaults), strokeWidth: defaults.strokeWidth, stroke: defaults.stroke })
+  if (!canAdd(scene.elements.length, scene.elements.reduce((count, element) => count + (element.type === 'stroke' ? element.points.length : 0), 0))) return
+  const bounds = sceneBounds(scene), v = viewport.value, dx = v.x + v.width / v.zoom / 2 - bounds.x - bounds.width / 2, dy = v.y + v.height / v.zoom / 2 - bounds.y - bounds.height / 2
+  for (const element of scene.elements) translateElement(element, dx, dy)
+  draft.value.elements.push(...scene.elements); selected.value = scene.elements.map(element => element.id); boardTemplatesOpen.value = false
+  if (commit('插入白板模板')) nextTick(fitCanvas)
+  focusStage()
+}
 function updateGlobalStyle(key: 'roughness' | 'strokePattern' | 'strokeWidth' | 'stroke', value: string | number) {
   flush()
   if (key === 'strokeWidth') { const width = typeof value === 'string' && !value.trim() ? NaN : Number(value); if (!Number.isFinite(width)) { const input = editor.value?.querySelector<HTMLInputElement>('#global-width'); if (input) input.value = String(globalStyle.value.strokeWidth); return }; value = Math.max(0, Math.min(100, width)) }
@@ -229,9 +285,9 @@ function updateGlobalStyle(key: 'roughness' | 'strokePattern' | 'strokeWidth' | 
 }
 function reorder(operation: 'front' | 'back' | 'forward' | 'backward') { flush(); draft.value = reorderElements(draft.value, selected.value, operation); commit(({ front: '移到顶层', back: '移到底层', forward: '上移一层', backward: '下移一层' })[operation]) }
 function openContextMenu(event: MouseEvent) {
-  event.preventDefault(); flush(); globalStyleOpen.value = false; bindingTarget.value = undefined
+  event.preventDefault(); flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; bindingTarget.value = undefined
   const target = event.target instanceof Element ? event.target.closest('[data-element-id]')?.getAttribute('data-element-id') : undefined
-  if (target && !selected.value.includes(target)) selected.value = [target]
+  if (target && !selected.value.includes(target)) selected.value = expandedSelection(draft.value, [target])
   if (!target && !(event.shiftKey)) selected.value = []
   contextMenu.value = { x: event.clientX, y: event.clientY }
 }
@@ -244,10 +300,15 @@ function contextAction(action: string) {
   else if (action === 'paste') pasteSelected()
   else if (action === 'select-all') selected.value = draft.value.elements.map(e => e.id)
   else if (action === 'lock') toggleLock()
+  else if (action === 'group') groupSelection()
+  else if (action === 'ungroup') groupSelection(true)
   else if (action === 'delete') deleteSelected()
   else if (['front', 'back', 'forward', 'backward'].includes(action)) reorder(action as 'front' | 'back' | 'forward' | 'backward')
   else if (action.startsWith('export-')) { flush(); emit('export', action.endsWith('png') ? 'png' : 'svg', action.includes('selection') ? selectionScene(draft.value, selected.value) : undefined) }
 }
+function groupSelection(ungroup = false) { flush(); draft.value = ungroup ? ungroupElements(draft.value, selected.value) : groupElements(draft.value, selected.value); selected.value = expandedSelection(draft.value, selected.value); commit(ungroup ? '取消组合' : '组合元素'); focusStage() }
+function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') { flush(); draft.value = alignElements(draft.value, selected.value, mode); commit('对齐元素'); focusStage() }
+function distributeSelection(axis: 'horizontal' | 'vertical') { flush(); draft.value = distributeElements(draft.value, selected.value, axis); commit('均匀分布元素'); focusStage() }
 function toggleLock() { const lock = !selectedElements.value.every(e => e.locked); for (const e of selectedElements.value) e.locked = lock; commit(lock ? '锁定图形' : '解锁图形') }
 function toggleGrid() { draft.value.grid = !draft.value.grid; commit('切换网格') }
 function autoLayout() { flush(); draft.value = layoutScene(draft.value); commit('自动布局'); nextTick(fitCanvas) }
@@ -261,14 +322,15 @@ function keyDown(event: KeyboardEvent) {
   const command = event.ctrlKey || event.metaKey
   if (command && ['z', 'y', 's'].includes(event.key.toLowerCase())) return
   if (event.code === 'Space') { event.preventDefault(); spaceHeld.value = true; return }
-  if (event.key === 'Escape') { contextMenu.value = undefined; globalStyleOpen.value = false; cancelGesture(); selected.value = []; tool.value = 'select'; return }
+  if (event.key === 'Escape') { contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; cancelGesture(); selected.value = []; tool.value = 'select'; return }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return }
   if (command && event.key.toLowerCase() === 'a') { event.preventDefault(); selected.value = draft.value.elements.map(e => e.id); return }
   if (command && event.key.toLowerCase() === 'c') { event.preventDefault(); copySelected(); return }
   if (command && event.key.toLowerCase() === 'v') { event.preventDefault(); pasteSelected(); return }
   if (command && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); return }
+  if (command && event.key.toLowerCase() === 'g') { event.preventDefault(); groupSelection(event.shiftKey); return }
   if (command) return
-  if (event.key.startsWith('Arrow') && selected.value.length) { event.preventDefault(); const delta = event.shiftKey ? 10 : 1, dx = event.key === 'ArrowLeft' ? -delta : event.key === 'ArrowRight' ? delta : 0, dy = event.key === 'ArrowUp' ? -delta : event.key === 'ArrowDown' ? delta : 0; for (const e of selectedElements.value) if (!e.locked) translateElement(e, dx, dy); commit('移动图形'); return }
+  if (event.key.startsWith('Arrow') && selected.value.length) { event.preventDefault(); const delta = event.shiftKey ? 10 : 1, dx = event.key === 'ArrowLeft' ? -delta : event.key === 'ArrowRight' ? delta : 0, dy = event.key === 'ArrowUp' ? -delta : event.key === 'ArrowDown' ? delta : 0; const movingIds = new Set(movableSelection(draft.value)); for (const e of draft.value.elements) if (movingIds.has(e.id)) translateElement(e, dx, dy); commit('移动图形'); return }
   if (event.key === 'Enter') { event.preventDefault(); startEdit(primary.value); return }
   const shortcut = tools.find(t => t.shortcut?.toLowerCase() === event.key.toLowerCase()); if (shortcut) { event.preventDefault(); setTool(shortcut.id) }
   if (event.key === '0') fitCanvas()
@@ -283,12 +345,13 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
   <section ref="editor" class="scene-editor" :class="{ 'board-mode': mode === 'board' }" @keydown="keyDown" @input.capture="markControlDirty" @change.capture="clearControlDirty" data-testid="scene-editor">
     <div class="canvas-commandbar" @pointerdown.stop>
       <div class="toolset" role="toolbar" aria-label="画布工具">
-        <button v-if="mode === 'flow'" aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
+        <button aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
         <button v-for="item in tools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
         <span class="tool-divider" />
         <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()"><AppIcon name="image" :size="20" /></button>
       </div>
-      <div class="commandbar-actions"><button aria-label="全局线条风格" title="全局线条风格" :aria-expanded="globalStyleOpen" @click="flush(); globalStyleOpen = !globalStyleOpen" data-testid="global-style-toggle"><AppIcon name="style" /></button><button v-if="mode === 'flow'" class="text-button" @click="autoLayout" title="自动排列流程图">自动布局</button><button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板"><AppIcon name="sliders" /></button></div>
+      <div class="commandbar-actions"><button v-if="mode === 'board'" aria-label="白板模板" title="白板模板" :aria-expanded="boardTemplatesOpen" @click="flush(); globalStyleOpen = false; boardTemplatesOpen = !boardTemplatesOpen" data-testid="board-template-toggle"><AppIcon name="templates" /></button><button aria-label="全局线条风格" title="全局线条风格" :aria-expanded="globalStyleOpen" @click="flush(); boardTemplatesOpen = false; globalStyleOpen = !globalStyleOpen" data-testid="global-style-toggle"><AppIcon name="style" /></button><button v-if="mode === 'flow'" class="text-button" @click="autoLayout" title="自动排列流程图">自动布局</button><button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板"><AppIcon name="sliders" /></button></div>
+      <div v-if="boardTemplatesOpen" class="board-template-popover"><BoardTemplatePanel @insert="insertBoardTemplate" @close="boardTemplatesOpen = false" /></div>
       <div v-if="globalStyleOpen" class="global-style-panel" role="region" aria-label="全局线条风格" @keydown.escape.stop="globalStyleOpen = false; focusStage()">
         <div class="panel-heading">全局线条<button aria-label="关闭全局线条设置" @click="globalStyleOpen = false"><AppIcon name="close" :size="15" /></button></div>
         <div class="line-mode-options"><button :aria-pressed="globalStyle.roughness !== 'sketch'" @click="updateGlobalStyle('roughness', 'clean')" data-testid="global-line-clean"><svg viewBox="0 0 60 24"><path d="M6 17 L24 7 L40 17 L54 7" /></svg><span>整洁</span></button><button :aria-pressed="globalStyle.roughness === 'sketch'" @click="updateGlobalStyle('roughness', 'sketch')" data-testid="global-line-sketch"><svg viewBox="0 0 60 24"><path d="M6 17 Q14 10 24 7 Q33 15 40 17 Q47 9 54 7 M7 18 Q15 11 25 8 Q31 16 41 16 Q48 9 54 6" /></svg><span>手绘</span></button></div>
@@ -300,7 +363,7 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
       <input ref="imageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="importImage" />
     </div>
     <div class="canvas-workspace" :style="{ background: draft.background }">
-      <aside v-if="mode === 'flow' && libraryOpen" class="shape-library" aria-label="图形素材"><div class="panel-heading">图形素材 <button aria-label="关闭图形素材" @click="libraryOpen = false"><AppIcon name="close" :size="15" /></button></div><div class="library-caption">通用图形</div><div class="shape-grid"><button v-for="item in shapePalette" :key="item.shape" @click="addShape(item.shape)" :aria-label="`添加${item.text}`"><span>{{ item.icon }}</span><small>{{ item.text }}</small></button></div><div class="library-hint">双击图形编辑文字<br />连线工具连接两个图形<br />按住空格移动画布</div></aside>
+      <aside v-if="libraryOpen" class="shape-library" aria-label="图形素材"><div class="panel-heading">图形素材 <button aria-label="关闭图形素材" @click="libraryOpen = false"><AppIcon name="close" :size="15" /></button></div><div class="library-caption">选择形状后在画布上拖动</div><div class="shape-grid"><button v-for="item in shapePalette" :key="item.shape" @click="setTool(item.shape)" :aria-pressed="tool === item.shape" :aria-label="`绘制${item.text}`"><AppIcon :name="item.icon" :size="27" /><small>{{ item.text }}</small></button></div><div class="library-hint">双击图形编辑文字<br />连线工具连接两个图形<br />按住空格移动画布</div></aside>
       <div ref="stage" class="canvas-stage" :class="{ 'is-panning': spaceHeld || tool === 'hand', 'is-drawing': !['select', 'hand'].includes(tool) }" tabindex="0" role="application" aria-label="绘图画布" data-testid="canvas-stage" @pointerdown="pointerDown($event)" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelGesture" @wheel.prevent="wheel" @dblclick="backgroundDoubleClick" @contextmenu="openContextMenu" @pointerleave="!gesture && (bindingTarget = undefined)">
         <svg class="scene-svg" :viewBox="viewBox" width="100%" height="100%" aria-label="工作流画布" :style="{ background: draft.background }">
           <defs><pattern :id="gridId" patternUnits="userSpaceOnUse" :x="-grid.step / 2" :y="-grid.step / 2" :width="grid.step" :height="grid.step" data-testid="canvas-grid-pattern"><circle :cx="grid.step / 2" :cy="grid.step / 2" :r="grid.radius" :fill="grid.color" :opacity="grid.opacity" /></pattern></defs>
@@ -312,19 +375,21 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
           <rect v-if="marquee" v-bind="marquee" fill="#7c6aee18" stroke="#7c6aee" :stroke-width="1 / viewport.zoom" pointer-events="none" />
         </svg>
         <textarea v-if="editingNode" ref="textInput" v-model="editText" maxlength="100000" class="inline-text-editor" :style="editPosition" :aria-label="editingNode.type === 'edge' ? '编辑连线文字' : '编辑图形文字'" @blur="flush" @keydown.escape.stop="editingId = undefined; focusStage()" @keydown.enter.ctrl.prevent="flush(); focusStage()" @keydown.enter.meta.prevent="flush(); focusStage()" @pointerdown.stop />
-        <div v-if="!draft.elements.length" class="empty-canvas"><div class="empty-canvas-icon">{{ mode === 'flow' ? '◇' : '✎' }}</div><strong>{{ mode === 'flow' ? '让想法，顺着流程展开' : '留一块空白，给下一个好想法' }}</strong><span>从工具栏选择图形，或插入一张本地图片</span></div>
-        <div class="canvas-bottom" @pointerdown.stop><div class="canvas-hint">{{ selected.length ? `已选 ${selected.length} 个元素${selectedElements.some(e => e.locked) ? ' · 包含锁定元素' : ''}` : tool === 'edge' ? bindingTarget ? '松开即可连接 · 图形移动后连线自动跟随' : '拖到图形附近即可吸附 · 拖动端点可重新连接' : '空格拖动 · Ctrl / ⌘ + 滚轮缩放' }}</div><div class="zoom-controls"><button aria-label="缩小" @click.stop="zoomTo(viewport.zoom / 1.2)">−</button><button class="zoom-value" title="重置为 100%" @click.stop="zoomTo(1)">{{ zoomLabel }}</button><button aria-label="放大" @click.stop="zoomTo(viewport.zoom * 1.2)">+</button><span /><button aria-label="适应画布" title="适应画布 (0)" @click.stop="fitCanvas">⛶</button></div></div>
+        <div v-if="!draft.elements.length" class="empty-canvas"><div class="empty-canvas-icon"><AppIcon :name="mode === 'flow' ? 'flow' : 'pen'" :size="32" /></div><strong>{{ mode === 'flow' ? '让想法，顺着流程展开' : '留一块空白，给下一个好想法' }}</strong><span>从工具栏选择图形，或插入一张本地图片</span></div>
+        <div class="canvas-bottom" @pointerdown.stop><div class="canvas-hint">{{ selected.length ? `已选 ${selected.length} 个元素${selectedElements.some(e => e.locked) ? ' · 包含锁定元素' : ''}` : tool === 'edge' ? bindingTarget ? '松开即可连接 · 图形移动后连线自动跟随' : '拖到图形附近即可吸附 · 拖动端点可重新连接' : '空格拖动 · Ctrl / ⌘ + 滚轮缩放' }}</div><div class="zoom-controls"><button aria-label="缩小" @click.stop="zoomTo(viewport.zoom / 1.2)"><AppIcon name="minus" :size="16" /></button><button class="zoom-value" title="重置为 100%" @click.stop="zoomTo(1)">{{ zoomLabel }}</button><button aria-label="放大" @click.stop="zoomTo(viewport.zoom * 1.2)"><AppIcon name="plus" :size="16" /></button><span /><button aria-label="适应画布" title="适应画布 (0)" @click.stop="fitCanvas"><AppIcon name="fit" :size="16" /></button></div></div>
       </div>
       <aside v-if="propertiesOpen" class="properties-panel" aria-label="属性面板"><div class="panel-heading">{{ selected.length ? '图形属性' : '画布设置' }}<small v-if="selected.length">{{ selected.length }} 个</small><button aria-label="关闭属性面板" @click="propertiesOpen = false"><AppIcon name="close" :size="15" /></button></div>
         <template v-if="selected.length"><div v-if="primary?.type === 'shape' || primary?.type === 'edge'" class="property-section"><label :for="`element-text-${primary.id}`">{{ primary.type === 'edge' ? '连线标签' : '文字内容' }}</label><textarea ref="propertyTextInput" :id="`element-text-${primary.id}`" :value="primary.type === 'shape' ? primary.text : primary.label" :disabled="primary.locked" @change="updateText(($event.target as HTMLTextAreaElement).value)" rows="3" maxlength="100000" data-testid="property-text" /></div>
-          <div class="property-section"><h3>外观</h3><div class="property-row"><label for="element-fill">填充</label><input id="element-fill" type="color" :value="primary?.style.fill?.startsWith('#') && primary.style.fill.length === 7 ? primary.style.fill : '#ffffff'" @change="updateStyle('fill', ($event.target as HTMLInputElement).value)" /><button class="mini-button" @click="updateStyle('fill', 'none')" title="无填充">无</button></div><div class="property-row"><label for="element-stroke">线条 / 文字</label><input id="element-stroke" type="color" :value="primary?.style.stroke?.startsWith('#') && primary.style.stroke.length === 7 ? primary.style.stroke : '#334155'" @change="updateStyle('stroke', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-width">线宽</label><input id="element-width" type="number" min="0" max="100" :value="primary?.style.strokeWidth ?? 2" @change="updateStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-font">字号</label><input id="element-font" type="number" min="1" max="500" :value="primary?.style.fontSize ?? 16" @change="updateStyle('fontSize', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-align">对齐</label><select id="element-align" :value="primary?.style.textAlign ?? 'center'" @change="updateStyle('textAlign', ($event.target as HTMLSelectElement).value)"><option value="left">居左</option><option value="center">居中</option><option value="right">居右</option></select></div><div class="property-row"><label for="element-roughness">风格</label><select id="element-roughness" :value="primary?.style.roughness ?? 'clean'" @change="updateStyle('roughness', ($event.target as HTMLSelectElement).value)"><option value="clean">整洁</option><option value="sketch">手绘</option></select></div><div class="property-row"><label for="element-pattern">线型</label><select id="element-pattern" :value="primary ? resolveStrokePattern(primary.style) : 'solid'" @change="updateStyle('strokePattern', ($event.target as HTMLSelectElement).value)"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></div></div>
+          <div v-if="primary?.type === 'shape' && primary.shape === 'note'" class="property-section"><h3>便签颜色</h3><div class="note-color-palette"><button v-for="color in noteColors" :key="color" :style="{ background: color }" :aria-label="`便签颜色 ${color}`" :aria-pressed="primary.style.fill === color" :disabled="primary.locked" @click="updateStyle('fill', color)"><AppIcon v-if="primary.style.fill === color" name="check" :size="15" /></button></div></div>
+          <div class="property-section"><h3>外观</h3><div class="property-row"><label for="element-fill">填充</label><input id="element-fill" type="color" :value="primary?.style.fill?.startsWith('#') && primary.style.fill.length === 7 ? primary.style.fill : '#ffffff'" @change="updateStyle('fill', ($event.target as HTMLInputElement).value)" /><button class="mini-button" @click="updateStyle('fill', 'none')" title="无填充">无</button></div><div class="property-row"><label for="element-stroke">线条 / 文字</label><input id="element-stroke" type="color" :value="primary?.style.stroke?.startsWith('#') && primary.style.stroke.length === 7 ? primary.style.stroke : '#334155'" @change="updateStyle('stroke', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-width">线宽</label><input id="element-width" type="number" min="0" max="100" :value="primary?.style.strokeWidth ?? 2" @change="updateStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-opacity">透明度</label><input id="element-opacity" type="number" min="0" max="1" step="0.05" :value="primary?.style.opacity ?? 1" @change="updateStyle('opacity', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-font">字号</label><input id="element-font" type="number" min="1" max="500" :value="primary?.style.fontSize ?? 16" @change="updateStyle('fontSize', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-align">对齐</label><select id="element-align" :value="primary?.style.textAlign ?? 'center'" @change="updateStyle('textAlign', ($event.target as HTMLSelectElement).value)"><option value="left">居左</option><option value="center">居中</option><option value="right">居右</option></select></div><div class="property-row"><label for="element-roughness">风格</label><select id="element-roughness" :value="primary?.style.roughness ?? 'clean'" @change="updateStyle('roughness', ($event.target as HTMLSelectElement).value)"><option value="clean">整洁</option><option value="sketch">手绘</option></select></div><div class="property-row"><label for="element-pattern">线型</label><select id="element-pattern" :value="primary ? resolveStrokePattern(primary.style) : 'solid'" @change="updateStyle('strokePattern', ($event.target as HTMLSelectElement).value)"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></div></div>
           <div v-if="primary?.type === 'edge'" class="property-section"><h3>连接方式</h3><div class="property-row"><label for="edge-route">路径</label><select id="edge-route" :value="primary.route" @change="updateEdge('route', ($event.target as HTMLSelectElement).value)"><option value="orthogonal">直角连线</option><option value="straight">直线</option></select></div><div class="property-row"><label for="edge-arrow">箭头</label><select id="edge-arrow" :value="primary.arrow" @change="updateEdge('arrow', ($event.target as HTMLSelectElement).value)"><option value="end">单向</option><option value="both">双向</option><option value="none">无箭头</option></select></div></div>
+          <div v-if="selected.length > 1 || selectedElements.some(e => e.groupId)" class="property-section"><h3>组合与整理</h3><div class="property-buttons"><button :disabled="selectedElements.filter(e => !e.locked).length < 2" @click="groupSelection()" data-testid="group-selection"><AppIcon name="group" :size="14" />组合</button><button :disabled="!selectedElements.some(e => e.groupId && !e.locked)" @click="groupSelection(true)" data-testid="ungroup-selection"><AppIcon name="ungroup" :size="14" />取消组合</button></div><div v-if="selected.length > 1" class="alignment-buttons"><button v-for="item in alignmentOptions" :key="item.id" :aria-label="item.label" :title="item.label" @click="alignSelection(item.id)" :data-testid="`align-${item.id}`"><AppIcon :name="`align-${item.id}`" :size="17" /></button><button aria-label="水平等距分布" title="水平等距分布" :disabled="selected.length < 3" @click="distributeSelection('horizontal')" data-testid="distribute-horizontal"><AppIcon name="distribute-horizontal" :size="17" /></button><button aria-label="垂直等距分布" title="垂直等距分布" :disabled="selected.length < 3" @click="distributeSelection('vertical')" data-testid="distribute-vertical"><AppIcon name="distribute-vertical" :size="17" /></button></div><p class="group-hint">点击组合整体选择 · Alt + 点击选择成员<br />Ctrl / ⌘ + G 组合，添加 Shift 取消组合</p></div>
           <div class="property-section"><h3>排列与操作</h3><div class="property-buttons"><button @click="reorder('front')">移到顶层</button><button @click="reorder('back')">移到底层</button><button @click="reorder('forward')">上移一层</button><button @click="reorder('backward')">下移一层</button><button @click="duplicateSelected">复制一份</button><button @click="toggleLock">{{ selectedElements.every(e => e.locked) ? '解锁' : '锁定' }}</button></div><button class="delete-button" @click="deleteSelected">删除所选</button></div>
         </template>
-        <div v-else class="property-section"><h3>显示</h3><label class="check-row"><input type="checkbox" :checked="draft.grid" @change="toggleGrid" />显示点阵网格</label><label class="check-row"><input type="checkbox" v-model="snapEnabled" />吸附到网格</label><div class="property-row"><label for="scene-background">背景颜色</label><input id="scene-background" type="color" :value="draft.background" @change="draft.background = ($event.target as HTMLInputElement).value; commit('修改背景')" /></div><button class="open-global-style" @click="globalStyleOpen = true">全局线条风格<AppIcon name="style" :size="16" /></button><p class="property-tip">双击图形编辑文字，右键打开操作菜单。<br /><br />Shift + 点击：多选<br />方向键：微调位置<br />Delete：删除所选<br />Ctrl / ⌘ + D：复制</p></div>
+        <div v-else class="property-section"><h3>显示</h3><label class="check-row"><input type="checkbox" :checked="draft.grid" @change="toggleGrid" />显示点阵网格</label><label class="check-row"><input type="checkbox" v-model="snapEnabled" />吸附到网格</label><div class="property-row"><label for="scene-background">背景颜色</label><input id="scene-background" type="color" :value="draft.background" @change="draft.background = ($event.target as HTMLInputElement).value; commit('修改背景')" /></div><button class="open-global-style" @click="boardTemplatesOpen = false; globalStyleOpen = true">全局线条风格<AppIcon name="style" :size="16" /></button><p class="property-tip">双击图形编辑文字，右键打开操作菜单。<br /><br />Shift + 点击：多选<br />方向键：微调位置<br />Delete：删除所选<br />Ctrl / ⌘ + D：复制</p></div>
       </aside>
     </div>
-    <CanvasContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :has-selection="!!selected.length" :can-edit-text="!!primary && !primary.locked && (primary.type === 'edge' || (primary.type === 'shape' && primary.shape !== 'image'))" :has-unlocked="selectedElements.some(e => !e.locked)" :all-locked="!!selected.length && selectedElements.every(e => e.locked)" :can-paste="!!clipboard.length" @action="contextAction" @close="closeContextMenu" />
+    <CanvasContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :has-selection="!!selected.length" :can-edit-text="!!primary && !primary.locked && (primary.type === 'edge' || (primary.type === 'shape' && primary.shape !== 'image'))" :has-unlocked="selectedElements.some(e => !e.locked)" :all-locked="!!selected.length && selectedElements.every(e => e.locked)" :can-paste="!!clipboard.length" :can-group="selectedElements.filter(e => !e.locked).length > 1" :can-ungroup="selectedElements.some(e => e.groupId && !e.locked)" @action="contextAction" @close="closeContextMenu" />
   </section>
 </template>
 
@@ -340,4 +405,6 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
 @media(max-width:1100px){.commandbar-actions .text-button{display:none}.shape-library{width:144px;flex-basis:144px}.properties-panel{width:202px;flex-basis:202px;padding:14px}.canvas-hint{display:none}}
 @media(max-width:800px){.canvas-commandbar,.board-mode .canvas-commandbar{left:12px;right:12px;max-width:none;transform:none;justify-content:space-between}.properties-panel{position:absolute;right:0;top:0;bottom:0;z-index:8;width:216px;margin:76px 12px 64px 0}.shape-library{display:block;position:absolute;z-index:8;left:0;top:0;bottom:0;margin-top:76px}.toolset button{width:32px}.board-mode .commandbar-actions{right:auto}.global-style-panel{max-width:calc(100vw - 40px)}}
 @media(max-width:540px){.toolset button[aria-label="判断"],.toolset button[aria-label="移动画布"]{display:grid}.toolset button{width:31px}.canvas-commandbar{gap:3px}.commandbar-actions{gap:1px}.commandbar-actions button{width:30px}.empty-canvas{top:46%}}
+.alignment-buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:9px}.alignment-buttons button{display:grid;place-items:center;height:30px;border:1px solid var(--ui-line);background:var(--ui-bg);border-radius:5px}.group-hint{font-size:10px;line-height:1.7;color:var(--ui-muted);margin:12px 0 0}.note-color-palette{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}.note-color-palette button{display:grid;place-items:center;height:24px;border:1px solid #33415522;border-radius:5px;color:#334155}.property-buttons button{display:flex;align-items:center;justify-content:center;gap:4px}.scene-editor button:disabled{opacity:.4;cursor:default}.shape-grid button[aria-pressed=true]{border-color:var(--ui-accent);background:#8670ef12}.zoom-controls button{display:grid;place-items:center}
+.board-template-popover{position:absolute;right:0;top:56px;width:310px;max-width:calc(100vw - 40px);z-index:11}
 </style>

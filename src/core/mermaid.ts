@@ -1,16 +1,13 @@
+import { MermaidSyntaxError, type DiagramResult } from './diagrams/common.ts'
+import { compileStructureDiagram } from './diagrams/structure.ts'
+import { compileChartDiagram } from './diagrams/charts.ts'
+import { compilePlanningDiagram } from './diagrams/planning.ts'
 import { DEFAULT_STYLE, type EdgeElement, type ElementStyle, type Scene, type SceneElement, type ShapeElement } from './types.ts'
 import { layoutScene } from './layout.ts'
 
 /** This is our own deliberately bounded Mermaid-compatible parser, not Mermaid's renderer. */
-export interface MermaidResult { scene: Scene; warnings: string[]; kind: 'flowchart' | 'sequence' }
-export class MermaidSyntaxError extends Error {
-  readonly line: number
-  readonly column: number
-  constructor(message: string, line: number, column = 1) {
-    super(`第 ${line} 行${column > 1 ? `，第 ${column} 列` : ''}：${message}`)
-    this.name = 'MermaidSyntaxError'; this.line = line; this.column = column
-  }
-}
+export type MermaidResult = DiagramResult
+export { MermaidSyntaxError } from './diagrams/common.ts'
 interface Statement { text: string; line: number }
 const MAX_NODES = 400, MAX_EDGES = 800
 const ID = '[A-Za-z0-9_\\u0080-\\uFFFF]+(?:[-.][A-Za-z0-9_\\u0080-\\uFFFF]+)*'
@@ -259,7 +256,9 @@ export function compileMermaid(source: string): MermaidResult {
   // Sequence message text may contain punctuation/brackets, so only flowcharts use bracket-aware splitting.
   const normalized = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
   const first = normalized.split('\n').find(line => line.trim() && !/^\s*%%(?!\{)/.test(line))?.trim()
-  if (!first) throw new MermaidSyntaxError('请输入 flowchart TD 或 sequenceDiagram 开始绘图。', 1)
+  if (!first) throw new MermaidSyntaxError('请输入图表源码，或从模板库选择一种图表。', 1)
+  const extended = compileStructureDiagram(normalized) ?? compileChartDiagram(normalized) ?? compilePlanningDiagram(normalized)
+  if (extended) return extended
   if (first === 'sequenceDiagram' || /^sequenceDiagram\s*%%(?!\{)/.test(first)) {
     const lines: Statement[] = []
     normalized.split('\n').forEach((line, index) => {
@@ -271,6 +270,6 @@ export function compileMermaid(source: string): MermaidResult {
   const parts = statements(normalized), header = parts.shift()
   if (!header) throw new MermaidSyntaxError('请添加图表类型。', 1)
   const flow = header.text.match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)$/)
-  if (!flow) fail('当前支持 flowchart / graph（TD、TB、LR、RL、BT）和 sequenceDiagram；其他 Mermaid 图表暂不支持。', header)
+  if (!flow) fail('不支持此图表声明，请从图表模板库选择支持的类型。', header)
   return compileFlow(parts, flow![1] === 'TD' ? 'TB' : flow![1] as 'TB' | 'LR' | 'RL' | 'BT')
 }

@@ -1,5 +1,5 @@
 import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, type Scene, type SceneElement, type ShapeElement } from '../core/types.ts'
-import { edgePoints } from '../core/geometry.ts'
+import { edgePoints, elementBounds } from '../core/geometry.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
 import { validateElementStyle } from '../core/documents.ts'
 
@@ -31,8 +31,8 @@ function color(value: unknown, fallback: string, warnings: Set<string>): string 
 
 function styleOf(element: Json, warnings: Set<string>): ElementStyle {
   if (finite(element.angle) !== 0) warnings.add('旋转图形已转为未旋转的图形，位置可能与原图不同。')
-  if (Array.isArray(element.groupIds) && element.groupIds.length) warnings.add('分组关系不保留；图形的世界坐标得到保留。')
-  if (element.frameId) warnings.add('框架与裁剪关系不保留。')
+  if (Array.isArray(element.groupIds) && element.groupIds.length > 1) warnings.add('嵌套分组已合并为最外层组合。')
+  if (element.frameId) warnings.add('框架位置得到保留；frame 裁剪关系已展开。')
   const roughness = finite(element.roughness) > 0 ? 'sketch' : 'clean'
   const strokePattern = element.strokeStyle === 'dashed' || element.strokeStyle === 'dotted' ? element.strokeStyle : 'solid'
   if (roughness === 'sketch') warnings.add('手绘线条已保留，抖动强度和具体笔迹可能与原图不同。')
@@ -50,8 +50,8 @@ function styleOf(element: Json, warnings: Set<string>): ElementStyle {
   }
 }
 
-function worldPoints(element: Json, minimum = 2): { x: number; y: number }[] {
-  if (!Array.isArray(element.points) || element.points.length < minimum || element.points.length > 100000) throw new Error('Excalidraw 线条缺少有效的 points 数据。')
+function worldPoints(element: Json, minimum = 2, maximum = 100000): { x: number; y: number }[] {
+  if (!Array.isArray(element.points) || element.points.length < minimum || element.points.length > maximum) throw new Error('Excalidraw 线条缺少有效的 points 数据。')
   const x = finite(element.x); const y = finite(element.y)
   return element.points.map(point => {
     if (!Array.isArray(point) || point.length < 2) throw new Error('Excalidraw 线条坐标格式不正确。')
@@ -85,19 +85,23 @@ export function importExcalidraw(text: string): ImportedScene {
   for (const element of source) {
     const id = element.id as string
     const kind = element.type
-    const supported = ['rectangle', 'ellipse', 'diamond', 'text', 'arrow', 'line', 'freedraw', 'image', 'stickynote']
+    const supported = ['rectangle', 'ellipse', 'diamond', 'text', 'arrow', 'line', 'freedraw', 'image', 'stickynote', 'frame']
     if (typeof kind !== 'string' || !supported.includes(kind)) { warnings.add(`元素类型“${typeof kind === 'string' ? kind.slice(0, 80) : '未知'}”暂不支持，已跳过。`); continue }
     if (kind === 'text' && typeof element.containerId === 'string') {
       const parent = sourceMap.get(element.containerId)
-      if (parent && ['rectangle', 'ellipse', 'diamond', 'stickynote', 'image', 'arrow', 'line'].includes(String(parent.type))) { pendingLabels.push(element); continue }
+      if (parent && ['rectangle', 'ellipse', 'diamond', 'stickynote', 'image', 'arrow', 'line', 'frame'].includes(String(parent.type))) { pendingLabels.push(element); continue }
     }
     const style = styleOf(element, warnings)
     const locked = element.locked === true
+    const native = isObject(element.customData) && isObject(element.customData.openWorkflow) ? element.customData.openWorkflow : undefined
+    const groupIds = Array.isArray(element.groupIds) ? element.groupIds.filter((id): id is string => typeof id === 'string' && !!id && id.length <= 512) : []
     let result: SceneElement
-    if (kind === 'freedraw') {
+    if (kind === 'freedraw' || native?.type === 'stroke') {
       const pressures = element.pressures
       if (Array.isArray(pressures) && pressures.some(value => value !== pressures[0])) warnings.add('笔迹压感已简化为固定线宽。')
-      result = { id, type: 'stroke', points: worldPoints(element, 1), style, locked }
+      const points = worldPoints(element, native?.closed === true ? 3 : 1, native?.closed === true ? 100001 : 100000)
+      if (native?.closed === true && points.length > 3 && points[0]!.x === points.at(-1)!.x && points[0]!.y === points.at(-1)!.y) points.pop()
+      result = { id, type: 'stroke', points, style, locked, ...(native?.closed === true ? { closed: true } : {}) }
     } else if (kind === 'arrow' || kind === 'line') {
       const points = worldPoints(element)
       if (points.length > 2 && element.elbowed !== true) warnings.add('折线与曲线已简化为两端点连线。')
@@ -119,10 +123,11 @@ export function importExcalidraw(text: string): ImportedScene {
         if (element.crop || (Array.isArray(element.scale) && element.scale.some(value => value !== 1))) warnings.add('图片裁剪和翻转效果不保留。')
       }
       if (shape === 'text') { style.fill = 'transparent'; style.stroke = color(element.strokeColor, DEFAULT_STYLE.stroke, warnings) }
-      const native = isObject(element.customData) && isObject(element.customData.openWorkflow) ? element.customData.openWorkflow : undefined
-      if (kind === 'rectangle' && native?.shape === 'note') shape = 'note'
-      result = { id, type: 'shape', shape, x: finite(element.x), y: finite(element.y), width: Math.max(1, finite(element.width, 120)), height: Math.max(1, finite(element.height, 70)), text: shape === 'text' ? safeText(element.text) : '', style, locked, ...(imageData ? { imageData } : {}) }
+      if (kind === 'rectangle' && typeof native?.shape === 'string' && ['note', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame'].includes(native.shape)) shape = native.shape as ShapeElement['shape']
+      if (shape === 'frame') { style.fill = 'none'; warnings.add('frame 已转换为可编辑分区框架，裁剪关系不保留。') }
+      result = { id, type: 'shape', shape, x: finite(element.x), y: finite(element.y), width: Math.max(1, finite(element.width, 120)), height: Math.max(1, finite(element.height, 70)), text: shape === 'text' ? safeText(element.text) : shape === 'frame' ? safeText(element.name) : '', style, locked, ...(imageData ? { imageData } : {}) }
     }
+    if (groupIds.length) result.groupId = groupIds.at(-1)
     elements.push(result); mapped.set(id, result)
   }
   for (const label of pendingLabels) {
@@ -156,7 +161,7 @@ export function exportExcalidraw(scene: Scene): string {
   const takenIds = new Set(scene.elements.map(element => element.id))
   function labelId(id: string): string { let result = `${id}__label`; while (takenIds.has(result)) result += '_'; takenIds.add(result); return result }
   function base(element: SceneElement): Json {
-    return { id: element.id, angle: 0, strokeColor: element.style.stroke, backgroundColor: element.style.fill, fillStyle: 'solid', strokeWidth: element.style.strokeWidth, strokeStyle: resolveStrokePattern(element.style), roughness: element.style.roughness === 'sketch' ? 1 : 0, opacity: element.style.opacity * 100, groupIds: [], frameId: null, roundness: null, seed: 1, version: 1, versionNonce: 0, isDeleted: false, boundElements: [], updated, link: null, locked: element.locked }
+    return { id: element.id, angle: 0, strokeColor: element.style.stroke, backgroundColor: element.style.fill, fillStyle: 'solid', strokeWidth: element.style.strokeWidth, strokeStyle: resolveStrokePattern(element.style), roughness: element.style.roughness === 'sketch' ? 1 : 0, opacity: element.style.opacity * 100, groupIds: element.groupId ? [element.groupId] : [], frameId: null, roundness: null, seed: 1, version: 1, versionNonce: 0, isDeleted: false, boundElements: [], updated, link: null, locked: element.locked }
   }
   function textElement(id: string, value: string, x: number, y: number, width: number, height: number, element: SceneElement, containerId: string | null): Json {
     return { ...base(element), id, type: 'text', x, y, width, height, text: value, originalText: value, fontSize: element.style.fontSize, fontFamily: 2, textAlign: element.style.textAlign, verticalAlign: containerId ? 'middle' : 'top', containerId, autoResize: false, lineHeight: 1.25, backgroundColor: 'transparent' }
@@ -167,8 +172,9 @@ export function exportExcalidraw(scene: Scene): string {
     const result = base(element)
     if (element.type === 'shape') {
       if (element.shape === 'text') { elements.push(textElement(element.id, element.text, element.x, element.y, element.width, element.height, element, null)); continue }
-      Object.assign(result, { type: element.shape === 'note' ? 'rectangle' : element.shape, x: element.x, y: element.y, width: element.width, height: element.height, boundElements: [...(bindings.get(element.id) || [])] })
-      if (element.shape === 'note') result.customData = { openWorkflow: { shape: 'note' } }
+      Object.assign(result, { type: ['rectangle', 'ellipse', 'diamond', 'image', 'frame'].includes(element.shape) ? element.shape : 'rectangle', x: element.x, y: element.y, width: element.width, height: element.height, boundElements: [...(bindings.get(element.id) || [])] })
+      if (!['rectangle', 'ellipse', 'diamond', 'image', 'frame'].includes(element.shape)) result.customData = { openWorkflow: { shape: element.shape } }
+      if (element.shape === 'frame') Object.assign(result, { name: element.text })
       if (element.shape === 'image') {
         if (!safeImage(element.imageData)) throw new Error('导出图片必须为内嵌 PNG/JPEG/WebP。')
         const fileId = `image-${element.id}`
@@ -176,15 +182,15 @@ export function exportExcalidraw(scene: Scene): string {
         Object.assign(result, { fileId, status: 'saved', scale: [1, 1], crop: null })
       }
       elements.push(result)
-      if (element.text) {
+      if (element.text && element.shape !== 'frame') {
         const id = labelId(element.id)
         ;(result.boundElements as Json[]).push({ id, type: 'text' })
         elements.push(textElement(id, element.text, element.x + 8, element.y + 8, Math.max(1, element.width - 16), Math.max(1, element.height - 16), element, element.id))
       }
     } else if (element.type === 'stroke') {
       if (!element.points.length) throw new Error('笔迹没有坐标，无法导出。')
-      const x = Math.min(...element.points.map(point => point.x)); const y = Math.min(...element.points.map(point => point.y))
-      Object.assign(result, { type: 'freedraw', x, y, width: Math.max(...element.points.map(point => point.x)) - x, height: Math.max(...element.points.map(point => point.y)) - y, points: element.points.map(point => [point.x - x, point.y - y]), pressures: [], simulatePressure: true, lastCommittedPoint: null })
+      const { x, y, width, height } = elementBounds(element)
+      Object.assign(result, { type: element.closed ? 'line' : 'freedraw', customData: { openWorkflow: { type: 'stroke', ...(element.closed ? { closed: true } : {}) } }, x, y, width, height, points: [...element.points, ...(element.closed ? [element.points[0]!] : [])].map(point => [point.x - x, point.y - y]), startArrowhead: null, endArrowhead: null, pressures: [], simulatePressure: true, lastCommittedPoint: null })
       elements.push(result)
     } else {
       const world = edgePoints(element, scene)

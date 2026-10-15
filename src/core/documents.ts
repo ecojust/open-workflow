@@ -4,7 +4,7 @@ import { resolveStrokePattern, sceneDefaultStyle } from './appearance.ts'
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 const MAX_ELEMENTS = 5000
-const SHAPES = ['rectangle', 'ellipse', 'diamond', 'note', 'text', 'image'] as const
+const SHAPES = ['rectangle', 'ellipse', 'diamond', 'note', 'text', 'image', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame'] as const
 function object(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('文件内容应为一个对象。')
   return value as Record<string, any>
@@ -52,7 +52,7 @@ export function validateScene(value: unknown): Scene {
     const id = string(e.id, '元素 ID', 512)
     if (!id || ids.has(id)) throw new Error('画布包含空白或重复的元素 ID。')
     ids.add(id)
-    const base = { id, style: validateElementStyle(e.style), locked: e.locked === true }
+    const base = { id, style: validateElementStyle(e.style), locked: e.locked === true, ...(e.groupId ? { groupId: string(e.groupId, '组合 ID', 512) } : {}) }
     if (e.type === 'shape') {
       const shape = choice(e.shape, SHAPES, '图形')
       if (shape === 'image' && !safeImage(e.imageData)) throw new Error('图片必须是内嵌 PNG、JPEG 或 WebP（不超过 10 MB）。')
@@ -66,8 +66,8 @@ export function validateScene(value: unknown): Scene {
       return { ...base, type: 'edge', from: endpoint(e.from), to: endpoint(e.to), label: string(e.label ?? '', '连线标签'), arrow: choice(e.arrow, ['end', 'both', 'none'], '箭头'), route: choice(e.route, ['straight', 'orthogonal'], '连线类型') }
     }
     if (e.type === 'stroke') {
-      if (!Array.isArray(e.points) || e.points.length < 1 || (points += e.points.length) > 100000) throw new Error('笔迹为空或总点数超过 100000。')
-      return { ...base, type: 'stroke', points: e.points.map((p: unknown) => { const point = object(p); return { x: number(point.x, '笔迹 X'), y: number(point.y, '笔迹 Y') } }) }
+      if (!Array.isArray(e.points) || e.points.length < (e.closed === true ? 3 : 1) || (points += e.points.length) > 100000) throw new Error('笔迹为空或总点数超过 100000。')
+      return { ...base, type: 'stroke', ...(e.closed === true ? { closed: true } : {}), points: e.points.map((p: unknown) => { const point = object(p); return { x: number(point.x, '笔迹 X'), y: number(point.y, '笔迹 Y') } }) }
     }
     throw new Error('文件中有不支持的画布元素。')
   })
@@ -113,10 +113,10 @@ export function contentKey(doc: WorkflowDocument): string {
   // Object insertion order and non-document metadata must not make a saved file dirty.
   const styleKey = (s: ElementStyle) => [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, resolveStrokePattern(s), s.roughness ?? 'clean']
   const elements = doc.scene.elements.map(element => {
-    const base = [element.id, element.type, element.locked, styleKey(element.style)]
+    const base = [element.id, element.type, element.locked, styleKey(element.style), ...(element.groupId ? [element.groupId] : [])]
     if (element.type === 'shape') return [...base, element.shape, element.x, element.y, element.width, element.height, element.text, element.imageData ?? null]
     if (element.type === 'edge') return [...base, [element.from.x, element.from.y, element.from.nodeId ?? null], [element.to.x, element.to.y, element.to.nodeId ?? null], element.label, element.arrow, element.route]
-    return [...base, element.points.map(point => [point.x, point.y])]
+    return [...base, element.points.map(point => [point.x, point.y]), ...(element.closed ? [true] : [])]
   })
   return JSON.stringify([doc.title, doc.kind, doc.scene.background, doc.scene.grid, styleKey(sceneDefaultStyle(doc.scene)), elements, doc.source])
 }

@@ -9,6 +9,8 @@ const props = defineProps<{
   hasUnlocked: boolean
   allLocked: boolean
   canPaste: boolean
+  canGroup?: boolean
+  canUngroup?: boolean
 }>()
 const emit = defineEmits<{ action: [action: string]; close: [] }>()
 
@@ -35,6 +37,8 @@ const groups = computed<MenuItem[][]>(() => [
     { action: 'select-all', label: '选择全部', icon: 'select', shortcut: `${modifier}+A` },
   ],
   [
+    ...(props.canGroup ? [{ action: 'group', label: '组合', icon: 'group', shortcut: `${modifier}+G` }] : []),
+    ...(props.canUngroup ? [{ action: 'ungroup', label: '取消组合', icon: 'ungroup', shortcut: `${modifier}+Shift+G` }] : []),
     { action: 'front', label: '置于顶层', icon: 'front', disabled: !props.hasSelection || !props.hasUnlocked },
     { action: 'forward', label: '上移一层', icon: 'forward', disabled: !props.hasSelection || !props.hasUnlocked },
     { action: 'backward', label: '下移一层', icon: 'backward', disabled: !props.hasSelection || !props.hasUnlocked },
@@ -62,6 +66,8 @@ const menuStyle = computed<CSSProperties>(() => ({
   visibility: ready.value ? 'visible' : 'hidden',
 }))
 const paths: Record<string, string> = {
+  group: 'M3 3h18v18H3zM6 6h7v7H6zM11 11h7v7h-7z',
+  ungroup: 'M3 3h10v10H3zM11 11h10v10H11z',
   text: 'M4 5h16M12 5v14M8 19h8M4 5v3m16-3v3',
   copy: 'M8 8h12v13H8zM16 8V3H3v13h5',
   duplicate: 'M7 7h14v14H7zM17 7V3H3v14h4M11 14h6m-3-3v6',
@@ -108,9 +114,9 @@ function keydown(event: KeyboardEvent) {
   event.stopPropagation()
   if (event.key === 'Escape' || event.key === 'Tab') { event.preventDefault(); close(); return }
   const shortcut = event.ctrlKey || event.metaKey
-    ? ({ c: 'copy', d: 'duplicate', v: 'paste', a: 'select-all' } as Record<string, string>)[event.key.toLowerCase()]
+    ? ({ c: 'copy', d: 'duplicate', v: 'paste', a: 'select-all', g: event.shiftKey ? 'ungroup' : 'group' } as Record<string, string>)[event.key.toLowerCase()]
     : event.key === 'Delete' || event.key === 'Backspace' ? 'delete' : undefined
-  if (shortcut && !event.altKey && !event.shiftKey) {
+  if (shortcut && !event.altKey && (!event.shiftKey || shortcut === 'ungroup')) {
     event.preventDefault()
     const item = groups.value.flat().find(item => item.action === shortcut)
     if (item) activate(item)

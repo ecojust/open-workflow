@@ -169,16 +169,18 @@ test('Excalidraw binds text even when label appears before its container and rem
   assert.ok(result.warnings.some(value => value.includes('绑定')))
 })
 
-test('Excalidraw explicitly reports unsupported elements, groups, rotation and non-safe images', () => {
+test('Excalidraw retains frames and flat groups while reporting rotation and non-safe images', () => {
   const result = importExcalidraw(JSON.stringify({ type: 'excalidraw', elements: [
     { id: 'frame', type: 'frame', width: 100, height: 100 },
     { id: 'r', type: 'rectangle', x: 5, y: 6, width: 30, height: 50, angle: 0.5, groupIds: ['group'], roughness: 2, fillStyle: 'hachure' },
     { id: 'img', type: 'image', width: 40, height: 40, fileId: 'unsafe' },
     { id: 'deleted', type: 'rectangle', isDeleted: true },
   ], files: { unsafe: { dataURL: 'data:image/svg+xml;base64,PHN2Zy8+' } } }))
-  assert.equal(result.scene.elements.length, 2)
+  assert.equal(result.scene.elements.length, 3)
+  assert.equal(result.scene.elements.find(element => element.id === 'frame').shape, 'frame')
+  assert.equal(result.scene.elements.find(element => element.id === 'r').groupId, 'group')
   assert.equal(result.scene.elements.find(element => element.id === 'img').shape, 'rectangle')
-  for (const fragment of ['frame', '旋转', '分组', '纹理', 'SVG']) assert.ok(result.warnings.some(value => value.includes(fragment)), fragment)
+  for (const fragment of ['frame', '旋转', '纹理', 'SVG']) assert.ok(result.warnings.some(value => value.includes(fragment)), fragment)
 })
 
 test('Excalidraw rejects malformed JSON, wrong documents, duplicate IDs and unsafe numeric input', () => {

@@ -119,7 +119,7 @@ function changeScene(scene: Scene, label = '已修改画布') { if (active.value
 function changeSource(source: string) { if (active.value) commit(active.value, doc => { doc.source = source }, '已修改 Mermaid 源码') }
 async function copyMermaid(scene: Scene) {
   await flush(); const doc = createDocument('flow'); doc.title = `${active.value?.document.title || 'Mermaid'} · 可编辑副本`.slice(0, 200); doc.scene = clone(scene); addDocument(doc)
-  message('已创建流程图副本，可直接调整节点与连线。')
+  message('已创建可编辑副本，可直接调整图形、文字与连线。')
 }
 async function historyAction(action: 'undo' | 'redo') {
   await flush(); const tab = active.value; if (!tab || home.value) return
@@ -347,7 +347,7 @@ onBeforeUnmount(() => {
         <button title="打开文件 (Ctrl+O)" @click="openFiles"><AppIcon name="folder"/><span>打开</span></button>
         <span class="toolbar-divider"></span>
         <button title="保存 (Ctrl+S)" :disabled="!active || home || !!busy" @click="save()"><AppIcon name="save"/><span>保存</span></button>
-        <button class="save-as" title="另存为 (Ctrl+Shift+S)" :disabled="!active || home || !!busy" @click="save(active, true)"><span>另存为</span></button>
+        <button class="save-as" title="另存为 (Ctrl+Shift+S)" :disabled="!active || home || !!busy" @click="save(active, true)"><AppIcon name="save-as"/><span>另存为</span></button>
         <button title="导出" :disabled="!active || home || !!busy" :aria-expanded="menu === 'export'" @click="menu = menu === 'export' ? null : 'export'"><AppIcon name="export"/><span>导出</span><AppIcon name="chevron" :size="12"/></button>
         <span class="toolbar-divider"></span>
         <button class="icon-button" title="撤销 (Ctrl+Z)" aria-label="撤销" :disabled="home || !active?.history.canUndo" @click="historyAction('undo')"><AppIcon name="undo"/></button>
@@ -378,16 +378,16 @@ onBeforeUnmount(() => {
           <template v-if="section === 'home'">
             <div class="create-grid">
               <button class="create-card flow-card" data-testid="create-flow" @click="create('flow')">
-                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M65 56h48m54 0h48" stroke="#94b5ef" fill="none" stroke-width="2"/><rect x="18" y="36" width="70" height="40" rx="8" fill="#fff" stroke="#80a7e8"/><path d="m140 28 36 28-36 28-36-28z" fill="#dbeafe" stroke="#4c83dc"/><rect x="194" y="36" width="70" height="40" rx="20" fill="#fff" stroke="#80a7e8"/><path d="M35 56h35m149 0h22" stroke="#a8bfdf" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus">+</span></div>
+                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M65 56h48m54 0h48" stroke="#94b5ef" fill="none" stroke-width="2"/><rect x="18" y="36" width="70" height="40" rx="8" fill="#fff" stroke="#80a7e8"/><path d="m140 28 36 28-36 28-36-28z" fill="#dbeafe" stroke="#4c83dc"/><rect x="194" y="36" width="70" height="40" rx="20" fill="#fff" stroke="#80a7e8"/><path d="M35 56h35m149 0h22" stroke="#a8bfdf" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
                 <div class="card-copy"><span class="type-icon"><AppIcon name="flow" :size="22"/></span><div><h2>流程图</h2><p>梳理步骤，连接逻辑</p></div><AppIcon name="arrow"/></div>
               </button>
               <button class="create-card board-card" data-testid="create-board" @click="create('board')">
-                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M88 67q45-65 100-12" stroke="#bc92d6" stroke-width="2" fill="none" stroke-dasharray="5 4"/><rect x="33" y="18" width="70" height="70" rx="3" fill="#fde68a" transform="rotate(-6 68 53)"/><rect x="172" y="29" width="70" height="70" rx="3" fill="#ddd6fe" transform="rotate(7 207 64)"/><path d="M48 40h40m-40 10h30m97 5h40m-40 10h29" stroke="#9d8a7a" opacity=".6" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus">+</span></div>
+                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M88 67q45-65 100-12" stroke="#bc92d6" stroke-width="2" fill="none" stroke-dasharray="5 4"/><rect x="33" y="18" width="70" height="70" rx="3" fill="#fde68a" transform="rotate(-6 68 53)"/><rect x="172" y="29" width="70" height="70" rx="3" fill="#ddd6fe" transform="rotate(7 207 64)"/><path d="M48 40h40m-40 10h30m97 5h40m-40 10h29" stroke="#9d8a7a" opacity=".6" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
                 <div class="card-copy"><span class="type-icon"><AppIcon name="board" :size="22"/></span><div><h2>自由白板</h2><p>手绘、便签与灵感收集</p></div><AppIcon name="arrow"/></div>
               </button>
               <button class="create-card mermaid-card" data-testid="create-mermaid" @click="create('mermaid')">
-                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><rect x="30" y="18" width="146" height="78" rx="8" fill="#fff" stroke="#9acac4"/><path d="m45 40 8 6-8 6m16-6h63M45 65h20m9 0h62m-91 12h56" stroke="#77aaa2" stroke-width="3" stroke-linecap="round"/><path d="M192 40h48v20h-48zm24 20v17m-14 0h28" stroke="#55988e" fill="#d5ece7" stroke-width="2"/></svg><span class="card-plus">+</span></div>
-                <div class="card-copy"><span class="type-icon"><AppIcon name="code" :size="22"/></span><div><h2>Mermaid</h2><p>用文字描述流程与时序</p></div><AppIcon name="arrow"/></div>
+                <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><rect x="30" y="18" width="146" height="78" rx="8" fill="#fff" stroke="#9acac4"/><path d="m45 40 8 6-8 6m16-6h63M45 65h20m9 0h62m-91 12h56" stroke="#77aaa2" stroke-width="3" stroke-linecap="round"/><path d="M192 40h48v20h-48zm24 20v17m-14 0h28" stroke="#55988e" fill="#d5ece7" stroke-width="2"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
+                <div class="card-copy"><span class="type-icon"><AppIcon name="code" :size="22"/></span><div><h2>Mermaid</h2><p>用文字绘制多种图表</p></div><AppIcon name="arrow"/></div>
               </button>
             </div>
             <div class="template-row"><span>从示例开始</span><button @click="create('flow', true)"><AppIcon name="flow" :size="15"/>项目审批流程<AppIcon name="arrow" :size="14"/></button><button @click="create('board', true)"><AppIcon name="board" :size="15"/>灵感收集板<AppIcon name="arrow" :size="14"/></button><span class="format-hint">支持导入 draw.io、Excalidraw 与 Mermaid</span></div>
@@ -436,7 +436,7 @@ onBeforeUnmount(() => {
       <section ref="modalPanel" class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><h2 id="modal-title">{{ modal.title }}</h2><button class="icon-button" title="关闭" aria-label="关闭对话框" @click="finishModal('cancel')"><AppIcon name="close"/></button></header><div class="modal-body">
         <p v-if="modal.text">{{ modal.text }}</p><input v-if="modal.kind === 'rename'" v-model="modal.value" class="rename-input" maxlength="200" aria-label="文档名称" @keydown.enter="finishModal('confirm')">
         <ul v-if="modal.lines" class="import-notes"><li v-for="(line, index) in modal.lines" :key="index">{{ line }}</li></ul>
-        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>流程与白板</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p></div><div class="help-block"><h3>文字绘图</h3><p>Mermaid 工作区支持基础流程图和时序图。源码即时预览，语法问题显示具体行号；可转换为流程图副本继续调整。高级 Mermaid 语法暂不支持。</p></div><div class="help-block"><h3>保存与兼容</h3><p>本地草稿自动保存到当前浏览器/桌面工作区。Ctrl+S 保存可迁移的 .owflow 文件。draw.io 和 Excalidraw 导入支持基础元素，转换限制会单独提示。无边记和 Whiteboard 的专有文件格式暂不支持。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
+        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>流程与白板</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>白板提供荧光笔、整元素橡皮擦、分区框架和四套可编辑模板。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>Mermaid 工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；也可创建可编辑副本继续调整。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>本地草稿自动保存到当前浏览器/桌面工作区。Ctrl+S 保存可迁移的 .owflow 文件。draw.io 和 Excalidraw 导入支持基础元素，转换限制会单独提示。无边记和 Whiteboard 的专有文件格式暂不支持。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
       </div><footer><template v-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
     </div>
   </div>

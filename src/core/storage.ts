@@ -17,13 +17,15 @@ function migrateSavedKey(document: WorkflowDocument, savedKey: unknown): string 
   })
   const legacyKey = JSON.stringify([document.title, document.kind, document.scene.background, document.scene.grid, elements, document.source])
   if (savedKey !== legacyKey) return savedKey
-  // The old key did not cover defaultStyle, roughness or strokePattern. A draft
+  // The old key did not cover appearance, grouping or closed strokes. A draft
   // modified with those features must remain dirty even if its old fields match.
   const legacyScene = {
     background: document.scene.background, grid: document.scene.grid,
     elements: document.scene.elements.map(element => {
       const { roughness: _roughness, strokePattern: _strokePattern, ...style } = element.style
-      return { ...element, style }
+      const legacyElement = { ...element }; delete legacyElement.groupId
+      if (legacyElement.type === 'stroke') delete legacyElement.closed
+      return { ...legacyElement, style }
     }),
   }
   return contentKey({ ...document, scene: legacyScene }) === currentKey ? currentKey : savedKey

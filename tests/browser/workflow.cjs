@@ -106,7 +106,13 @@ async function captureDocumentation() {
       await page.goto(baseURL)
       await page.getByTestId('create-flow').waitFor()
       if (kind === 'flow') await page.getByRole('button', { name: '项目审批流程', exact: false }).click()
-      if (kind === 'board') await page.getByRole('button', { name: '灵感收集板', exact: false }).click()
+      if (kind === 'board') {
+        await page.getByTestId('create-board').click()
+        await page.getByTestId('board-template-toggle').click()
+        await page.locator('[data-board-template="brainstorm"]').click()
+        await page.getByTestId('canvas-stage').press('Escape')
+        await page.getByRole('button', { name: '关闭属性面板', exact: true }).click()
+      }
       if (kind === 'mermaid') await page.getByTestId('create-mermaid').click()
       if (kind !== 'home') await expect(page.locator('.save-status')).toContainText('草稿已保存')
       if (kind === 'mermaid') {
@@ -115,6 +121,16 @@ async function captureDocumentation() {
       }
       await page.evaluate(() => document.fonts.ready)
       await page.screenshot({ path: path.join(folder, `${kind}.png`), fullPage: true, animations: 'disabled' })
+      if (kind === 'board') {
+        await page.getByTestId('board-template-toggle').click()
+        await expect(page.getByTestId('board-template-panel')).toBeVisible()
+        await page.screenshot({ path: path.join(folder, 'whiteboard-templates.png'), fullPage: true, animations: 'disabled' })
+      }
+      if (kind === 'mermaid') {
+        await page.getByTestId('mermaid-template-toggle').click()
+        await expect(page.getByTestId('mermaid-template-library')).toBeVisible()
+        await page.screenshot({ path: path.join(folder, 'diagram-library.png'), fullPage: true, animations: 'disabled' })
+      }
     } finally { await context.close() }
   }
   process.stdout.write(`Screenshots saved to ${folder}\n`)

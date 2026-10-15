@@ -59,7 +59,7 @@ test('comments and CRLF preserve diagnostic source line numbers', () => {
 })
 
 test('unsupported syntax, malformed input and unsupported types fail visibly', () => {
-  for (const source of ['', 'pie\n"Hello": 2', 'flowchart TD\nA -->', 'flowchart TD\nA[Oops', 'flowchart TD\nA["Oops]', 'flowchart TD\nA & B --> C', 'flowchart TD\nA:::red', 'flowchart TD\nclick A "https://example.com"']) {
+  for (const source of ['', 'unknownDiagram\nA --> B', 'flowchart TD\nA -->', 'flowchart TD\nA[Oops', 'flowchart TD\nA["Oops]', 'flowchart TD\nA & B --> C', 'flowchart TD\nA:::red', 'flowchart TD\nclick A "https://example.com"']) {
     assert.throws(() => compileMermaid(source), error => error instanceof MermaidSyntaxError && error.line > 0, source)
   }
 })

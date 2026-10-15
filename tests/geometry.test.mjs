@@ -6,6 +6,7 @@ import { layoutScene } from '../src/core/layout.ts'
 import { escapeXml, safeImageData, sceneToSvg, wrapText } from '../src/core/svg.ts'
 import { createDocument, MERMAID_SAMPLE } from '../src/core/documents.ts'
 import { compileMermaid } from '../src/core/mermaid.ts'
+import { STRUCTURAL_TEMPLATES } from '../src/core/diagrams/structure.ts'
 
 const shape = (id, x = 0, y = 0, kind = 'rectangle') => ({ id, type: 'shape', shape: kind, x, y, width: 160, height: 80, text: id, style: { ...DEFAULT_STYLE }, locked: false })
 const edge = (id, from, to, route = 'straight') => ({ id, type: 'edge', from: { x: 0, y: 0, nodeId: from }, to: { x: 0, y: 0, nodeId: to }, label: '', arrow: 'end', route, style: { ...DEFAULT_STYLE }, locked: false })
@@ -145,4 +146,55 @@ test('default Mermaid reciprocal edges use distinct orthogonal routes and export
   // Moving a bound node recalculates the separated lane without mutating persisted endpoints.
   review.x += 120
   assert.notDeepEqual(edgePoints(backward, document), second)
+})
+
+function stateRetryExample() {
+  const document = compileMermaid(STRUCTURAL_TEMPLATES.find(template => template.id === 'state-order-lifecycle').source).scene
+  const retry = document.elements.find(element => element.type === 'edge' && element.label === '失败重试')
+  const pending = document.elements.find(element => element.id === retry.to.nodeId)
+  const decision = document.elements.find(element => element.id === retry.from.nodeId)
+  const paying = document.elements.find(element => element.type === 'shape' && element.text === '支付中')
+  return { document, retry, pending, decision, paying }
+}
+function assertClearOrthogonalRoute(points, nodes) {
+  for (let index = 1; index < points.length; index++) {
+    const a = points[index - 1], b = points[index]
+    assert.ok(a.x === b.x || a.y === b.y)
+    for (const node of nodes) {
+      if (a.x === b.x && a.x > node.x && a.x < node.x + node.width) assert.ok(Math.max(a.y, b.y) <= node.y || Math.min(a.y, b.y) >= node.y + node.height, `vertical route crosses ${node.text}`)
+      if (a.y === b.y && a.y > node.y && a.y < node.y + node.height) assert.ok(Math.max(a.x, b.x) <= node.x || Math.min(a.x, b.x) >= node.x + node.width, `horizontal route crosses ${node.text}`)
+    }
+  }
+}
+test('actual state retry takes the shortest clear outside lane and ignores enclosing frames or captions', () => {
+  const { document, retry, pending, decision } = stateRetryExample(), before = JSON.stringify(document)
+  const points = edgePoints(retry, document)
+  assert.deepEqual(points, [
+    { x: decision.x + decision.width / 2, y: decision.y },
+    { x: decision.x + decision.width / 2, y: 36 },
+    { x: pending.x + pending.width / 2, y: 36 },
+    { x: pending.x + pending.width / 2, y: pending.y },
+  ])
+  assertClearOrthogonalRoute(points, document.elements.filter(element => element.type === 'shape'))
+  assert.equal(JSON.stringify(document), before, 'routing does not split, rewrite, or add an edge')
+  document.elements.push({ ...shape('enclosing-frame', -2000, -2000, 'frame'), width: 6000, height: 6000 }, { ...shape('caption', -1000, -1000, 'text'), width: 4000, height: 4000 })
+  assert.deepEqual(edgePoints(retry, document), points)
+  const bounds = sceneBounds(document)
+  for (const point of points) assert.ok(point.x >= bounds.x && point.y >= bounds.y && point.x <= bounds.x + bounds.width && point.y <= bounds.y + bounds.height)
+})
+test('state retry recomputes its safe lane when the intervening payment node moves', () => {
+  const { document, retry, paying } = stateRetryExample(), before = edgePoints(retry, document), storedEndpoints = JSON.stringify([retry.from, retry.to])
+  paying.y = 70 // Still blocks the original y=130 return and needs a higher lane to retain clearance.
+  const moved = edgePoints(retry, document)
+  assert.notDeepEqual(moved, before)
+  assert.equal(moved[1].y, 26)
+  assertClearOrthogonalRoute(moved, document.elements.filter(element => element.type === 'shape'))
+  assert.equal(JSON.stringify([retry.from, retry.to]), storedEndpoints)
+  const bounds = sceneBounds(document)
+  for (const point of moved) assert.ok(point.x >= bounds.x && point.y >= bounds.y && point.x <= bounds.x + bounds.width && point.y <= bounds.y + bounds.height)
+  paying.y = -200 // Clearing the obstruction restores the ordinary route instead of persisting a stale detour.
+  const cleared = edgePoints(retry, document)
+  assert.equal(cleared[0].x, 940)
+  assert.equal(cleared[0].y, 130)
+  assertClearOrthogonalRoute(cleared, document.elements.filter(element => element.type === 'shape'))
 })

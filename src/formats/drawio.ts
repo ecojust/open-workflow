@@ -165,7 +165,7 @@ function importModel(model: Element, title: string): ImportedScene {
     if (name === 'ellipse') shape = 'ellipse'
     else if (name === 'rhombus' || name === 'diamond') shape = 'diamond'
     else if (name === 'text') { shape = 'text'; style.fill = 'transparent'; style.stroke = color(map.fontColor || map.strokeColor, DEFAULT_STYLE.stroke, warnings) }
-    else if (name === 'note') shape = 'note'
+    else if (['note', 'triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame'].includes(name)) shape = name as ShapeElement['shape']
     else if (name === 'image') shape = 'image'
     else if (name !== 'rectangle') warnings.add(`形状“${name}”暂不支持，已显示为矩形。`)
     const imageData = safeImage(cell.getAttribute('openWorkflowImage') || map.image)
@@ -173,7 +173,7 @@ function importModel(model: Element, title: string): ImportedScene {
     if (cell.getAttribute('parent') && cellMap.get(cell.getAttribute('parent')!)?.getAttribute('vertex') === '1') warnings.add('分组和容器关系已展开为普通图形。')
     const wrapper = cell.parentNode?.nodeType === 1 ? cell.parentNode as Element : null
     const label = cell.getAttribute('value') || (wrapper?.tagName !== 'root' ? wrapper?.getAttribute('label') : '') || ''
-    const node: ShapeElement = { id: idMap.get(id)!, type: 'shape', shape, ...position(id), text: plainLabel(label, warnings, map.html === '1'), style, locked: cell.getAttribute('openWorkflowLocked') === '1' || map.movable === '0', ...(shape === 'image' ? { imageData } : {}) }
+    const node: ShapeElement = { id: idMap.get(id)!, type: 'shape', shape, ...position(id), text: plainLabel(label, warnings, map.html === '1'), style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' || map.movable === '0', ...(shape === 'image' ? { imageData } : {}) }
     nodes.set(id, node); elements.push(node)
   }
   for (const [id, cell] of cellMap) {
@@ -201,15 +201,19 @@ function importModel(model: Element, title: string): ImportedScene {
     const pointsContainer = geometry ? children(geometry, 'Array').find(array => array.getAttribute('as') === 'points') : undefined
     const waypoints = pointsContainer ? children(pointsContainer, 'mxPoint').map(point => ({ x: finite(point.getAttribute('x')) + parent.x, y: finite(point.getAttribute('y')) + parent.y })) : []
     if (cell.getAttribute('openWorkflowType') === 'stroke') {
-      elements.push({ id: idMap.get(id)!, type: 'stroke', points: cell.getAttribute('openWorkflowSinglePoint') === '1' ? [from] : [from, ...waypoints, to], style, locked: cell.getAttribute('openWorkflowLocked') === '1' }); continue
+      elements.push({ id: idMap.get(id)!, type: 'stroke', ...(cell.getAttribute('openWorkflowClosed') === '1' ? { closed: true } : {}), points: cell.getAttribute('openWorkflowSinglePoint') === '1' ? [from] : [from, ...waypoints, to], style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' }); continue
     }
     if (waypoints.length) warnings.add('手工连线折点已简化为自动直线或正交连线。')
     if (map.curved === '1' || (map.edgeStyle && !['orthogonalEdgeStyle', 'elbowEdgeStyle'].includes(map.edgeStyle))) warnings.add('曲线和特殊连线路由已简化。')
     const start = Boolean(map.startArrow && map.startArrow !== 'none')
     const end = map.endArrow !== 'none'
     if (start && !end) [from, to] = [to, from]
-    elements.push({ id: idMap.get(id)!, type: 'edge', from, to, label: plainLabel(cell.getAttribute('value') || '', warnings, map.html === '1'), arrow: start && end ? 'both' : start || end ? 'end' : 'none', route: map.edgeStyle === 'orthogonalEdgeStyle' || map.edgeStyle === 'elbowEdgeStyle' ? 'orthogonal' : 'straight', style, locked: cell.getAttribute('openWorkflowLocked') === '1' })
+    elements.push({ id: idMap.get(id)!, type: 'edge', from, to, label: plainLabel(cell.getAttribute('value') || '', warnings, map.html === '1'), arrow: start && end ? 'both' : start || end ? 'end' : 'none', route: map.edgeStyle === 'orthogonalEdgeStyle' || map.edgeStyle === 'elbowEdgeStyle' ? 'orthogonal' : 'straight', style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' })
   }
+  // Resolve bindings after all vertices exist, then restore the file's layer order.
+  // Filled ink, labels and connectors may be interleaved with ordinary shapes.
+  const layerOrder = new Map([...cellMap.keys()].map((id, index) => [idMap.get(id)!, index]))
+  elements.sort((a, b) => layerOrder.get(a.id)! - layerOrder.get(b.id)!)
   const defaultStyleText = model.getAttribute('openWorkflowDefaultStyle')
   const defaultStyle = defaultStyleText ? validateElementStyle(JSON.parse(defaultStyleText)) : undefined
   return { title, scene: { elements, background: color(model.getAttribute('background') || undefined, '#ffffff', warnings), grid: model.getAttribute('grid') !== '0', ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
@@ -245,7 +249,7 @@ export function exportDrawio(scene: Scene, title: string): string {
   const cellId = (id: string): string => `wf-${id}`
   const point = (as: string, value: Endpoint): string => `<mxPoint x="${value.x}" y="${value.y}" as="${as}"/>`
   const elements = scene.elements.map(element => {
-    const attributes = `id="${xml(cellId(element.id))}" openWorkflowId="${xml(element.id)}" openWorkflowLocked="${element.locked ? 1 : 0}" parent="1"`
+    const attributes = `id="${xml(cellId(element.id))}" openWorkflowId="${xml(element.id)}" openWorkflowLocked="${element.locked ? 1 : 0}"${element.groupId ? ` openWorkflowGroup="${xml(element.groupId)}"` : ''} parent="1"`
     if (element.type === 'shape') {
       const shape = element.shape === 'diamond' ? 'rhombus' : element.shape === 'text' ? 'text' : element.shape
       const imageData = element.shape === 'image' ? safeImage(element.imageData) : undefined
@@ -255,7 +259,7 @@ export function exportDrawio(scene: Scene, title: string): string {
     }
     if (element.type === 'stroke') {
       if (!element.points.length) throw new Error('笔迹没有坐标，无法导出。')
-      return `<mxCell ${attributes} openWorkflowType="stroke"${element.points.length === 1 ? ' openWorkflowSinglePoint="1"' : ''} edge="1" style="${xml(`${writeStyle(element.style)}endArrow=none;startArrow=none;`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', element.points[0]!)}${point('targetPoint', element.points.at(-1)!)}<Array as="points">${element.points.slice(1, -1).map(value => `<mxPoint x="${value.x}" y="${value.y}"/>`).join('')}</Array></mxGeometry></mxCell>`
+      return `<mxCell ${attributes} openWorkflowType="stroke"${element.closed ? ' openWorkflowClosed="1"' : ''}${element.points.length === 1 ? ' openWorkflowSinglePoint="1"' : ''} edge="1" style="${xml(`${writeStyle(element.style)}endArrow=none;startArrow=none;`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', element.points[0]!)}${point('targetPoint', element.points.at(-1)!)}<Array as="points">${element.points.slice(1, -1).map(value => `<mxPoint x="${value.x}" y="${value.y}"/>`).join('')}</Array></mxGeometry></mxCell>`
     }
     const bindings = `${element.from.nodeId ? ` source="${xml(cellId(element.from.nodeId))}"` : ''}${element.to.nodeId ? ` target="${xml(cellId(element.to.nodeId))}"` : ''}`
     const route = element.route === 'orthogonal' ? 'edgeStyle=orthogonalEdgeStyle;' : ''

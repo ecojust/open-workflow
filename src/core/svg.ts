@@ -1,5 +1,5 @@
 import type { ElementStyle, Point, Scene, SceneElement, ShapeElement } from './types.ts'
-import { edgePoints, pathMidpoint, pointsPath, sceneBounds } from './geometry.ts'
+import { edgePoints, pathMidpoint, pointsPath, sceneBounds, shapeOutline } from './geometry.ts'
 import { anchoredPolygon, sketchEllipse, sketchPolyline } from './sketch.ts'
 import { resolveStrokePattern } from './appearance.ts'
 
@@ -34,13 +34,17 @@ function boundAnchors(node: ShapeElement, scene: Scene): Point[] {
 }
 function sketchShape(node: ShapeElement, scene: Scene, hitTargets: boolean): string {
   const { x, y, width: w, height: h } = node
-  const vertices: Point[] = node.shape === 'diamond' ? [{ x: x + w / 2, y }, { x: x + w, y: y + h / 2 }, { x: x + w / 2, y: y + h }, { x, y: y + h / 2 }]
-    : [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]
+  const vertices = shapeOutline(node)
   const geometry = node.shape === 'ellipse' ? `ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}"` : `path d="${pointsPath(vertices)} Z"`
-  const fill = `<${geometry} fill="${color(node.style.fill)}" stroke="none" opacity="${Math.max(0, Math.min(1, node.style.opacity))}"/>`
-  const hit = hitTargets ? `<${geometry} fill="transparent" stroke="transparent" stroke-width="${Math.max(16, node.style.strokeWidth)}" pointer-events="all"/>` : ''
+  const fill = node.shape === 'frame' ? '' : `<${geometry} fill="${color(node.style.fill)}" stroke="none" opacity="${Math.max(0, Math.min(1, node.style.opacity))}"/>`
+  const hit = hitTargets ? `<${geometry} fill="${node.shape === 'frame' ? 'none' : 'transparent'}" stroke="transparent" stroke-width="${Math.max(16, node.style.strokeWidth)}" pointer-events="${node.shape === 'frame' ? 'stroke' : 'all'}"/>` : ''
   const anchors = boundAnchors(node, scene), paths = node.shape === 'ellipse' ? sketchEllipse(node, anchors, node.id) : sketchPolyline(anchoredPolygon(vertices, anchors), node.id, node.style.strokeWidth, true)
   return fill + hit + sketchMarkup(paths, node.style)
+}
+function cylinderSeam(node: ShapeElement): string {
+  const cap = Math.min(node.height * .18, node.width * .18)
+  const points = Array.from({ length: 25 }, (_, index) => { const angle = index * Math.PI / 24; return { x: node.x + node.width / 2 + Math.cos(angle) * node.width / 2, y: node.y + cap + Math.sin(angle) * cap } })
+  return strokeMarkup(points, `${node.id}:cap`, node.style)
 }
 export function wrapText(text: string, width: number, fontSize: number): string[] {
   const max = Math.max(1, width / Math.max(1, fontSize)), lines: string[] = []
@@ -54,12 +58,12 @@ export function wrapText(text: string, width: number, fontSize: number): string[
 function textMarkup(node: ShapeElement): string {
   if (!node.text || node.shape === 'image') return ''
   const fontSize = Math.max(1, Math.min(500, node.style.fontSize)), lineHeight = fontSize * 1.35
-  const innerWidth = node.shape === 'diamond' ? node.width * 0.58 : node.width - 20
-  const maxLines = Math.max(1, Math.floor((node.height - 12) / lineHeight))
+  const innerWidth = node.shape === 'diamond' ? node.width * .58 : node.shape === 'star' ? node.width * .46 : node.shape === 'triangle' ? node.width * .56 : ['cloud', 'parallelogram', 'hexagon'].includes(node.shape) ? node.width * .7 : node.width - 20
+  const maxLines = node.shape === 'frame' ? 1 : Math.max(1, Math.floor((node.height - 12) / lineHeight))
   const wrapped = wrapText(node.text, innerWidth, fontSize), lines = wrapped.slice(0, maxLines)
   if (wrapped.length > maxLines) lines[lines.length - 1] = `${lines[lines.length - 1]!.slice(0, -1)}…`
-  const align = node.style.textAlign, x = align === 'left' ? node.x + 10 : align === 'right' ? node.x + node.width - 10 : node.x + node.width / 2
-  const y = node.y + node.height / 2 - (lines.length - 1) * lineHeight / 2
+  const align = node.shape === 'frame' ? 'left' : node.style.textAlign, x = align === 'left' ? node.x + 12 : align === 'right' ? node.x + node.width - 10 : node.x + node.width / 2
+  const y = node.shape === 'frame' ? node.y + Math.min(node.height, Math.max(28, fontSize * 1.5 + 12)) / 2 : node.y + node.height / 2 - (lines.length - 1) * lineHeight / 2
   const textColor = ['transparent', 'none'].includes(node.style.stroke.toLowerCase()) ? '#334155' : node.style.stroke
   return `<text fill="${color(textColor)}" opacity="${node.style.opacity}" font-family="Inter, 'Noto Sans SC', system-ui, sans-serif" font-size="${fontSize}" text-anchor="${align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle'}" dominant-baseline="central" pointer-events="none">${lines.map((line, i) => `<tspan x="${x}" y="${y + i * lineHeight}">${escapeXml(line)}</tspan>`).join('')}</text>`
 }
@@ -73,7 +77,9 @@ function arrowMarkup(at: Point, previous: Point, style: ElementStyle, id: string
 export function elementToSvg(element: SceneElement, scene: Scene, hitTargets = false): string {
   if (element.type === 'stroke') {
     const points = element.points.length === 1 ? [element.points[0]!, { x: element.points[0]!.x + 0.01, y: element.points[0]!.y + 0.01 }] : element.points
-    return `${hitTargets ? `<path d="${pointsPath(points)}" fill="none" stroke="transparent" stroke-width="${Math.max(16, element.style.strokeWidth)}"/>` : ''}${strokeMarkup(points, element.id, element.style)}`
+    const closed = element.closed === true && points.length >= 3, d = pointsPath(points) + (closed ? ' Z' : '')
+    const fill = closed ? `<path d="${d}" fill="${color(element.style.fill)}" stroke="none" opacity="${Math.max(0, Math.min(1, element.style.opacity))}"/>` : ''
+    return `${fill}${hitTargets ? `<path d="${d}" fill="${closed ? 'transparent' : 'none'}" stroke="transparent" stroke-width="${Math.max(16, element.style.strokeWidth)}"/>` : ''}${strokeMarkup(points, element.id, element.style, closed)}`
   }
   if (element.type === 'edge') {
     const points = edgePoints(element, scene), d = pointsPath(points), middle = pathMidpoint(points)
@@ -86,13 +92,19 @@ export function elementToSvg(element: SceneElement, scene: Scene, hitTargets = f
   }
   const { x, y, width: w, height: h, shape } = element, attrs = styleAttrs(element.style)
   let markup = ''
-  if (isSketch(element.style) && ['rectangle', 'ellipse', 'diamond', 'note'].includes(shape)) markup = sketchShape(element, scene, hitTargets)
+  if (shape === 'frame') {
+    const headerHeight = Math.min(h, Math.max(28, element.style.fontSize * 1.5 + 12))
+    markup = isSketch(element.style) ? sketchShape(element, scene, hitTargets) : `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" ${styleAttrs(element.style, 'none')}/>`
+    if (hitTargets) markup += `<rect x="${x}" y="${y}" width="${w}" height="${headerHeight}" fill="transparent" pointer-events="all"/>`
+  }
+  else if (isSketch(element.style) && !['image', 'text'].includes(shape)) markup = sketchShape(element, scene, hitTargets)
   else if (shape === 'ellipse') markup = `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" ${attrs}/>`
   else if (shape === 'diamond') markup = `<path d="M${x + w / 2} ${y} L${x + w} ${y + h / 2} L${x + w / 2} ${y + h} L${x} ${y + h / 2} Z" ${attrs}/>`
+  else if (['triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud'].includes(shape)) markup = `<path d="${pointsPath(shapeOutline(element))} Z" ${attrs}/>`
   else if (shape === 'image' && safeImageData(element.imageData)) markup = `<image x="${x}" y="${y}" width="${w}" height="${h}" href="${escapeXml(element.imageData)}" preserveAspectRatio="xMidYMid meet" opacity="${element.style.opacity}"/>`
   else if (shape === 'text') markup = `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="transparent"/>`
   else markup = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${shape === 'note' ? 2 : 9}" ${attrs}/>${shape === 'note' ? `<path d="M${x + w - 18} ${y + h} L${x + w - 18} ${y + h - 18} L${x + w} ${y + h - 18}" fill="#0000000b" stroke="${color(element.style.stroke)}" stroke-opacity=".2"/>` : ''}`
-  return markup + textMarkup(element)
+  return markup + (shape === 'cylinder' ? cylinderSeam(element) : '') + textMarkup(element)
 }
 export function sceneToSvg(scene: Scene, options: { background?: boolean } = {}): string {
   const bounds = sceneBounds(scene), pad = Math.max(32, ...scene.elements.map(e => e.style.strokeWidth / 2 + 12 + (e.type === 'edge' && e.arrow !== 'none' ? Math.max(8, e.style.strokeWidth * 3.5) : 0))), x = bounds.x - pad, y = bounds.y - pad, width = Math.max(64, bounds.width + pad * 2), height = Math.max(64, bounds.height + pad * 2)
