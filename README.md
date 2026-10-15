@@ -42,7 +42,7 @@ npm run test:browser
 
 `test:browser` 使用真实 Chromium，并在需要时启动开发服务。已有 Chromium 可通过 `CHROMIUM_EXECUTABLE` 指定；`BASE_URL` 可指定已启动的服务。截图与结果默认写入 `/tmp/open-workflow-browser`，可通过 `BROWSER_ARTIFACTS` 更改。Linux 测试环境缺少浏览器系统库时，可使用 `npx playwright install --with-deps chromium`。
 
-桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。GitHub Actions 配置了 Windows x64、Mac Apple Silicon 与 Mac Intel 构建，安装包保存在 Actions artifacts；这不代表已经创建公开 Release。
+桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。Windows x64、Mac Apple Silicon 与 Mac Intel 的正式安装包见 [最新 Release](https://github.com/ecojust/open-workflow/releases/latest)。开发构建也会将产物保存在 Actions artifacts；正式发布会重新校验构建来源与文件摘要，流程见 [发布约定](.github/RELEASING.md)。
 
 ## 保存到哪里
 
