@@ -124,14 +124,14 @@ async function assertFits(page, target) {
   }
 }
 async function chooseTemplate(page, kind) {
-  await page.getByTestId('mermaid-template-toggle').click()
+  await page.getByTestId('diagram-template-toggle').click()
   await page.getByLabel('搜索图表模板', { exact: true }).fill('')
   await page.locator(`[data-diagram-kind="${kind}"]`).first().click()
-  if (await page.getByTestId('mermaid-confirm-template').isVisible()) await page.getByTestId('mermaid-confirm-template').click()
-  await expect(page.getByTestId('mermaid-template-library')).toHaveCount(0)
-  await expect(page.getByTestId('mermaid-error')).toHaveCount(0)
-  await expect(page.getByTestId('mermaid-preview').locator('svg')).toBeVisible()
-  await expect(page.locator('.mermaid-preview-kind')).toContainText(diagramKinds[kind])
+  if (await page.getByTestId('diagram-confirm-template').isVisible()) await page.getByTestId('diagram-confirm-template').click()
+  await expect(page.getByTestId('diagram-template-library')).toHaveCount(0)
+  await expect(page.getByTestId('diagram-error')).toHaveCount(0)
+  await expect(page.getByTestId('diagram-preview').locator('svg')).toBeVisible()
+  await expect(page.locator('.diagram-preview-kind')).toContainText(diagramKinds[kind])
 }
 function coords(document) { return document.scene.elements.filter(e => e.type === 'shape').map(e => ({ id: e.id, x: e.x, y: e.y, width: e.width, height: e.height })) }
 function near(actual, expected, label) { assert.ok(Math.abs(actual - expected) < .05, `${label}: ${actual} != ${expected}`) }
@@ -143,11 +143,11 @@ async function main() {
   browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--disable-dev-shm-usage'], headless: true })
 
   for (const [kind, label] of Object.entries(diagramKinds)) await test(`diagram-${kind}-template-save-svg-editable-copy`, async page => {
-    await page.getByTestId('create-mermaid').click()
+    await page.getByTestId('create-diagram').click()
     await chooseTemplate(page, kind)
-    const source = await page.getByTestId('mermaid-source').inputValue()
+    const source = await page.getByTestId('diagram-source').inputValue()
     assert.ok(source.trim().length > 20, `${label} should have a useful sample`)
-    const preview = await page.getByTestId('mermaid-preview').locator('svg').evaluate(svg => ({
+    const preview = await page.getByTestId('diagram-preview').locator('svg').evaluate(svg => ({
       labels: [...svg.querySelectorAll('text')].map(text => text.textContent),
       primitives: svg.querySelectorAll('path,rect,circle,ellipse,line,polyline,polygon').length,
     }))
@@ -171,12 +171,12 @@ async function main() {
     assert.deepEqual(exported.labels, preview.labels, 'Export must contain the exact preview labels')
     assert.ok(exported.viewBox?.split(/\s+/).every(value => Number.isFinite(Number(value))))
     for (let step = 0; step < 3; step++) {
-      const diagram = await page.getByTestId('mermaid-preview').boundingBox(), pane = await page.locator('.mermaid-preview-scroll').boundingBox()
+      const diagram = await page.getByTestId('diagram-preview').boundingBox(), pane = await page.locator('.diagram-preview-scroll').boundingBox()
       if (diagram.height <= pane.height - 32) break
       await page.getByRole('button', { name: '缩小预览', exact: true }).click()
     }
     await page.screenshot({ path: path.join(output, `diagram-${kind}-preview.png`), fullPage: true, animations: 'disabled' })
-    await page.getByTestId('mermaid-create-copy').click()
+    await page.getByTestId('diagram-create-copy').click()
     await expect(page.getByRole('tab')).toHaveCount(2)
     await expect(page.getByTestId('scene-editor')).toBeVisible()
     const editable = await save(page)
@@ -194,25 +194,25 @@ async function main() {
   })
 
   await test('diagram-library-search-cancel-history-and-error', async page => {
-    await page.getByTestId('create-mermaid').click()
-    const source = page.getByTestId('mermaid-source')
+    await page.getByTestId('create-diagram').click()
+    const source = page.getByTestId('diagram-source')
     const original = 'flowchart LR\n  unique[保留的源码] --> done[原始终点]'
     await source.fill(original)
-    await page.getByTestId('mermaid-template-toggle').click()
+    await page.getByTestId('diagram-template-toggle').click()
     const kinds = await page.locator('[data-diagram-kind]').evaluateAll(cards => [...new Set(cards.map(card => card.getAttribute('data-diagram-kind')))].sort())
     assert.deepEqual(kinds, Object.keys(diagramKinds).sort(), 'All 22 diagram families are discoverable')
     await page.getByLabel('搜索图表模板', { exact: true }).fill('radar')
     await expect(page.locator('[data-diagram-kind]')).toHaveCount(1)
     await page.locator('[data-diagram-kind="radar"]').click()
-    await expect(page.getByTestId('mermaid-confirm-template')).toBeVisible()
+    await expect(page.getByTestId('diagram-confirm-template')).toBeVisible()
     await page.locator('[data-template-cancel]').click()
     assert.equal(await source.inputValue(), original)
     await page.locator('[data-diagram-kind="radar"]').click()
     await page.keyboard.press('Escape')
-    await expect(page.getByTestId('mermaid-confirm-template')).toHaveCount(0)
+    await expect(page.getByTestId('diagram-confirm-template')).toHaveCount(0)
     await page.keyboard.press('Escape')
-    await expect(page.getByTestId('mermaid-template-library')).toHaveCount(0)
-    await expect(page.getByTestId('mermaid-template-toggle')).toBeFocused()
+    await expect(page.getByTestId('diagram-template-library')).toHaveCount(0)
+    await expect(page.getByTestId('diagram-template-toggle')).toBeFocused()
     assert.equal(await source.inputValue(), original)
     await chooseTemplate(page, 'radar')
     const replacement = await source.inputValue()
@@ -222,12 +222,12 @@ async function main() {
     await expect(source).toHaveValue(replacement)
     const invalid = 'notSupportedDiagram\n  untouched invalid source'
     await source.fill(invalid)
-    await expect(page.getByTestId('mermaid-error')).toBeVisible()
-    await expect(page.getByTestId('mermaid-create-copy')).toBeDisabled()
+    await expect(page.getByTestId('diagram-error')).toBeVisible()
+    await expect(page.getByTestId('diagram-create-copy')).toBeDisabled()
     assert.equal((await save(page)).source, invalid, 'Invalid draft remains saveable without replacing source')
     await undo(page)
     await expect(source).toHaveValue(replacement)
-    await expect(page.getByTestId('mermaid-error')).toHaveCount(0)
+    await expect(page.getByTestId('diagram-error')).toHaveCount(0)
   })
 
   await test('board-seven-new-shapes-have-real-outline', async page => {
@@ -464,15 +464,15 @@ async function main() {
     await exportedSvg(page)
   })
 
-  await test('workspace-svg-icons-home-flow-board-mermaid', async page => {
+  await test('workspace-svg-icons-home-flow-board-diagram', async page => {
     async function assertIcons(selector) {
       const issues = await page.locator(selector).evaluateAll(buttons => buttons.filter(button => !button.querySelector('svg path, svg line, svg polyline, svg rect, svg circle, svg ellipse, svg polygon')).map(button => button.getAttribute('aria-label') || button.getAttribute('title') || button.textContent))
       assert.deepEqual(issues, [], `Controls must use real SVG icons: ${selector}`)
     }
-    await assertIcons('[data-testid="create-flow"], [data-testid="create-board"], [data-testid="create-mermaid"]')
+    await assertIcons('[data-testid="create-flow"], [data-testid="create-board"], [data-testid="create-diagram"]')
     for (const mode of ['flow', 'board', 'mermaid']) {
       if (mode !== 'flow') await page.locator('.tab-home').click()
-      await page.getByTestId(`create-${mode}`).click()
+      await page.getByTestId(`create-${mode === 'mermaid' ? 'diagram' : mode}`).click()
       await assertIcons('button[title="保存 (Ctrl+S)"], button[title="导出"], button[aria-label="撤销"], button[aria-label="重做"]')
       if (mode !== 'mermaid') {
         await assertIcons('[data-testid^="tool-"], [data-testid="global-style-toggle"], button[aria-label="图形素材面板"], button[aria-label="属性面板"]')
@@ -480,8 +480,8 @@ async function main() {
         await assertIcons('.shape-grid button')
         await page.getByRole('button', { name: '关闭图形素材', exact: true }).click()
       } else {
-        await assertIcons('[data-testid="mermaid-template-toggle"], [data-testid="mermaid-create-copy"], button[aria-label="缩小预览"], button[aria-label="放大预览"]')
-        await page.getByTestId('mermaid-template-toggle').click()
+        await assertIcons('[data-testid="diagram-template-toggle"], [data-testid="diagram-create-copy"], button[aria-label="缩小预览"], button[aria-label="放大预览"]')
+        await page.getByTestId('diagram-template-toggle').click()
         await assertIcons('[data-template-id]')
         await page.keyboard.press('Escape')
       }
@@ -489,17 +489,17 @@ async function main() {
   })
 
   await test('mobile-template-library-and-expanded-whiteboard-fit', async page => {
-    await page.getByTestId('create-mermaid').click()
-    await page.getByTestId('mermaid-template-toggle').click()
-    const library = page.getByTestId('mermaid-template-library')
+    await page.getByTestId('create-diagram').click()
+    await page.getByTestId('diagram-template-toggle').click()
+    const library = page.getByTestId('diagram-template-library')
     await assertFits(page, library)
     const search = page.getByLabel('搜索图表模板', { exact: true })
     await expect(search).toBeFocused()
     await search.fill('packet')
     await page.locator('[data-diagram-kind="packet"]').click()
     await assertFits(page, library)
-    await page.getByTestId('mermaid-confirm-template').click()
-    await expect(page.getByTestId('mermaid-preview').locator('svg')).toBeVisible()
+    await page.getByTestId('diagram-confirm-template').click()
+    await expect(page.getByTestId('diagram-preview').locator('svg')).toBeVisible()
     await page.locator('.tab-home').click()
     await page.getByTestId('create-board').click()
     await assertFits(page, page.locator('.canvas-commandbar'))

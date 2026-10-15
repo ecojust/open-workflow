@@ -1,4 +1,4 @@
-# 第三方依赖与参考项目
+# 第三方依赖与许可
 
 Open Workflow 的原创代码按根目录 [LICENSE](LICENSE) 中的 MIT 许可提供。第三方软件分别适用自己的许可；本文件不把第三方代码的版权归于本项目。
 
@@ -10,7 +10,7 @@ Open Workflow 的原创代码按根目录 [LICENSE](LICENSE) 中的 MIT 许可�
 | --- | --- | --- |
 | [Vue](https://github.com/vuejs/core) | 界面组件和状态 | MIT |
 | [Tauri JavaScript API](https://github.com/tauri-apps/tauri) | 原生窗口和命令桥接 | MIT OR Apache-2.0 |
-| [fflate](https://github.com/101arrowz/fflate) | draw.io 页面解压 | MIT |
+| [fflate](https://github.com/101arrowz/fflate) | 图形 XML 压缩页面解压 | MIT |
 
 桌面直接 Rust 依赖包括 `tauri`、`tauri-plugin-dialog`、`tauri-build`、`serde`、`sha2`、`tempfile` 和 `base64`。Tauri 及其官方对话框插件采用 MIT OR Apache-2.0；其余依赖各自的许可证以对应 crate 的元数据和随附许可为准。本文件不是所有 Cargo 传递依赖或系统组件的完整许可审计。
 
@@ -59,10 +59,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## 研究与设计参考
+## 原创实现与兼容标识
 
-本项目使用 REA（`rea-agents@6.5.0`，MIT）对锁定版本的部分公开源码做有范围限制的静态分析，并阅读相关结构。工具安装与完整研究资料位于独立研究目录，不是应用依赖。研究对象包括 draw.io、mxGraph、Excalidraw、Mermaid；具体提交、文件哈希、命令、证据和局限见 [docs/RESEARCH.md](docs/RESEARCH.md)。
-
-本仓库没有复制这些项目的编辑器或渲染器实现，没有引入其编辑引擎依赖，也没有打包它们的图形素材库。兼容格式名称与语法名称用于说明互操作范围，不表示官方合作、背书或完整兼容。
-
-主界面布局参考 [Open Office](https://github.com/ecojust/open-office) 的工作台、工具栏、文档标签和属性面板；不包含该项目的 Office 运行时。Apple 无边记与 Microsoft Whiteboard 仅作为自由白板体验参考，未分析或复制其私有源码，也不支持其专有文件格式。应用图标是本项目原创的节点与连线图形。
+场景模型、编辑交互、图表解析、布局与 SVG 绘制由本项目实现，不包含第三方编辑器、图表引擎或图形素材库。应用图标是本项目原创的节点与连线图形。文件扩展名和协议字段仅用于格式兼容，不表示官方合作、背书或完整兼容；详细范围见 [格式说明](docs/FORMATS.md)。

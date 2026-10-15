@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DOMParser } from '@xmldom/xmldom'
 import { DIAGRAM_TEMPLATES, DIAGRAM_KIND_LABELS } from '../src/core/diagrams/catalog.ts'
-import { compileMermaid, MermaidSyntaxError } from '../src/core/mermaid.ts'
+import { compileCodeDiagram, DiagramSyntaxError } from '../src/core/code-diagram.ts'
 import { createDocument, serializeDocument, parseDocument, validateScene } from '../src/core/documents.ts'
 import { sceneToSvg } from '../src/core/svg.ts'
 
@@ -12,10 +12,10 @@ test('the searchable catalog exposes a unique working template for every support
   assert.deepEqual(new Set(DIAGRAM_TEMPLATES.map(template => template.kind)), new Set(Object.keys(DIAGRAM_KIND_LABELS)))
   for (const template of DIAGRAM_TEMPLATES) {
     assert.ok(template.title && template.description && template.category, template.id)
-    const result = compileMermaid(template.source)
+    const result = compileCodeDiagram(template.source)
     assert.equal(result.kind, template.kind, template.id)
     assert.ok(result.scene.elements.length > 0, template.id)
-    assert.deepEqual(compileMermaid(template.source), result, template.id)
+    assert.deepEqual(compileCodeDiagram(template.source), result, template.id)
     const doc = createDocument('mermaid')
     doc.source = template.source
     doc.scene = result.scene
@@ -33,8 +33,8 @@ test('the searchable catalog exposes a unique working template for every support
 test('every diagram parser preserves source line numbers and rejects executable configuration', () => {
   for (const template of DIAGRAM_TEMPLATES) {
     const source = `%% safe comment\n\n%%{init: {securityLevel: "loose"}}%%\n${template.source}`
-    assert.throws(() => compileMermaid(source), error => error instanceof MermaidSyntaxError && error.line === 3, template.id)
+    assert.throws(() => compileCodeDiagram(source), error => error instanceof DiagramSyntaxError && error.line === 3, template.id)
     const prefixed = '\uFEFF%% safe comment\r\n\r\n' + template.source.replaceAll('\n', '\r\n')
-    assert.equal(compileMermaid(prefixed).kind, template.kind, template.id)
+    assert.equal(compileCodeDiagram(prefixed).kind, template.kind, template.id)
   }
 })

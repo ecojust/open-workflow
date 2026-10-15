@@ -133,8 +133,8 @@ test('an input below 50 MiB is rejected if converted scene plus preserved source
   assert.throws(() => importText('large.excalidraw', source), /50 MB/)
 })
 
-test('Mermaid source export refuses other document kinds instead of emitting an empty file', async () => {
-  for (const kind of ['flow', 'board']) await assert.rejects(exportDocument(createDocument(kind), 'mmd'), /仅 Mermaid/)
+test('code diagram source export refuses other document kinds instead of emitting an empty file', async () => {
+  for (const kind of ['flow', 'board']) await assert.rejects(exportDocument(createDocument(kind), 'mmd'), /仅代码图表/)
   const doc = createDocument('mermaid')
   assert.equal(new TextDecoder().decode((await exportDocument(doc, 'mmd')).bytes), doc.source)
 })

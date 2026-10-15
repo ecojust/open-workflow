@@ -4,8 +4,8 @@ import { DEFAULT_STYLE } from '../src/core/types.ts'
 import { edgePoints, sceneBounds, shapeAnchor, pathMidpoint, elementBounds } from '../src/core/geometry.ts'
 import { layoutScene } from '../src/core/layout.ts'
 import { escapeXml, safeImageData, sceneToSvg, wrapText } from '../src/core/svg.ts'
-import { createDocument, MERMAID_SAMPLE } from '../src/core/documents.ts'
-import { compileMermaid } from '../src/core/mermaid.ts'
+import { createDocument, CODE_DIAGRAM_SAMPLE } from '../src/core/documents.ts'
+import { compileCodeDiagram } from '../src/core/code-diagram.ts'
 import { STRUCTURAL_TEMPLATES } from '../src/core/diagrams/structure.ts'
 
 const shape = (id, x = 0, y = 0, kind = 'rectangle') => ({ id, type: 'shape', shape: kind, x, y, width: 160, height: 80, text: id, style: { ...DEFAULT_STYLE }, locked: false })
@@ -131,8 +131,8 @@ test('real approval template return leaves branch top and enters earlier step fr
   const bounds = sceneBounds(document)
   for (const p of points) assert.ok(p.x >= bounds.x && p.y >= bounds.y && p.x <= bounds.x + bounds.width && p.y <= bounds.y + bounds.height)
 })
-test('default Mermaid reciprocal edges use distinct orthogonal routes and export includes return lane', () => {
-  const document = compileMermaid(MERMAID_SAMPLE).scene
+test('default code diagram reciprocal edges use distinct orthogonal routes and export includes return lane', () => {
+  const document = compileCodeDiagram(CODE_DIAGRAM_SAMPLE).scene
   const idea = document.elements.find(e => e.type === 'shape' && e.text === '整理想法'), review = document.elements.find(e => e.type === 'shape' && e.text === '准备好了吗？')
   const forward = document.elements.find(e => e.type === 'edge' && e.from.nodeId === idea.id && e.to.nodeId === review.id)
   const backward = document.elements.find(e => e.type === 'edge' && e.from.nodeId === review.id && e.to.nodeId === idea.id)
@@ -149,7 +149,7 @@ test('default Mermaid reciprocal edges use distinct orthogonal routes and export
 })
 
 function stateRetryExample() {
-  const document = compileMermaid(STRUCTURAL_TEMPLATES.find(template => template.id === 'state-order-lifecycle').source).scene
+  const document = compileCodeDiagram(STRUCTURAL_TEMPLATES.find(template => template.id === 'state-order-lifecycle').source).scene
   const retry = document.elements.find(element => element.type === 'edge' && element.label === '失败重试')
   const pending = document.elements.find(element => element.id === retry.to.nodeId)
   const decision = document.elements.find(element => element.id === retry.from.nodeId)

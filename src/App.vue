@@ -2,7 +2,7 @@
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppIcon from './components/AppIcon.vue'
 import SceneEditor from './components/SceneEditor.vue'
-import MermaidEditor from './components/MermaidEditor.vue'
+import CodeDiagramEditor from './components/CodeDiagramEditor.vue'
 import { clone, newId } from './core/types.ts'
 import type { DocumentKind, EditorHandle, Scene, WorkflowDocument } from './core/types.ts'
 import { contentKey, createDocument, DocumentHistory, MAX_FILE_BYTES, validateDocument } from './core/documents.ts'
@@ -10,6 +10,7 @@ import { deleteDraft, putDraft, readDrafts } from './core/storage.ts'
 import type { DraftRecord } from './core/storage.ts'
 import { documentBytes, downloadBytes, exportDocument, fileAccept, importText, safeFilename } from './core/files.ts'
 import type { ExportFormat } from './core/files.ts'
+import { normalizeDiagramStyle, type DiagramStyleId } from './core/diagram-appearance.ts'
 import { closeNativeWindow, isDesktop, onNativeCloseRequest, openNativeFiles, saveNativeFile } from './native.ts'
 
 interface Tab {
@@ -55,7 +56,7 @@ let unlisten: (() => void) | undefined
 let closing = false
 let saveCompletion: Promise<void> | undefined
 
-function kindName(kind: DocumentKind): string { return { flow: '流程图', board: '自由白板', mermaid: 'Mermaid' }[kind] }
+function kindName(kind: DocumentKind): string { return { flow: '流程图', board: '自由白板', mermaid: '代码图表' }[kind] }
 function kindIcon(kind: DocumentKind): string { return { flow: 'flow', board: 'board', mermaid: 'code' }[kind] }
 function message(text: string, error = false) {
   toast.value = { text, error }; clearTimeout(toastTimer)
@@ -116,9 +117,12 @@ function commit(tab: Tab, updater: (doc: WorkflowDocument) => void, label: strin
   } catch (error) { tab.document = clone(tab.document); errorMessage(error) }
 }
 function changeScene(scene: Scene, label = '已修改画布') { if (active.value) commit(active.value, doc => { doc.scene = scene }, label) }
-function changeSource(source: string) { if (active.value) commit(active.value, doc => { doc.source = source }, '已修改 Mermaid 源码') }
-async function copyMermaid(scene: Scene) {
-  await flush(); const doc = createDocument('flow'); doc.title = `${active.value?.document.title || 'Mermaid'} · 可编辑副本`.slice(0, 200); doc.scene = clone(scene); addDocument(doc)
+function changeSource(source: string) { if (active.value) commit(active.value, doc => { doc.source = source }, '已修改图表源码') }
+function changeDiagramStyle(style: DiagramStyleId) {
+  if (active.value) commit(active.value, doc => { doc.diagramStyle = normalizeDiagramStyle(style) }, '已修改全局绘图风格')
+}
+async function copyCodeDiagram(scene: Scene) {
+  await flush(); const doc = createDocument('flow'); doc.title = `${active.value?.document.title || '代码图表'} · 可编辑副本`.slice(0, 200); doc.scene = clone(scene); addDocument(doc)
   message('已创建可编辑副本，可直接调整图形、文字与连线。')
 }
 async function historyAction(action: 'undo' | 'redo') {
@@ -354,7 +358,6 @@ onBeforeUnmount(() => {
         <button class="icon-button" title="重做 (Ctrl+Shift+Z)" aria-label="重做" :disabled="home || !active?.history.canRedo" @click="historyAction('redo')"><AppIcon name="redo"/></button>
       </div>
       <div class="toolbar-end">
-        <span class="local-badge"><i></i>{{ native ? '桌面版' : '本地工作区' }}</span>
         <button class="icon-button" title="切换外观" aria-label="切换外观" :aria-expanded="menu === 'theme'" @click="menu = menu === 'theme' ? null : 'theme'"><AppIcon :name="effectiveTheme === 'dark' ? 'moon' : 'sun'"/></button>
         <button class="icon-button help-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
       </div>
@@ -385,19 +388,19 @@ onBeforeUnmount(() => {
                 <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><path d="M88 67q45-65 100-12" stroke="#bc92d6" stroke-width="2" fill="none" stroke-dasharray="5 4"/><rect x="33" y="18" width="70" height="70" rx="3" fill="#fde68a" transform="rotate(-6 68 53)"/><rect x="172" y="29" width="70" height="70" rx="3" fill="#ddd6fe" transform="rotate(7 207 64)"/><path d="M48 40h40m-40 10h30m97 5h40m-40 10h29" stroke="#9d8a7a" opacity=".6" stroke-width="3" stroke-linecap="round"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
                 <div class="card-copy"><span class="type-icon"><AppIcon name="board" :size="22"/></span><div><h2>自由白板</h2><p>手绘、便签与灵感收集</p></div><AppIcon name="arrow"/></div>
               </button>
-              <button class="create-card mermaid-card" data-testid="create-mermaid" @click="create('mermaid')">
+              <button class="create-card diagram-card" data-testid="create-diagram" @click="create('mermaid')">
                 <div class="card-art"><svg viewBox="0 0 280 112" aria-hidden="true"><rect x="30" y="18" width="146" height="78" rx="8" fill="#fff" stroke="#9acac4"/><path d="m45 40 8 6-8 6m16-6h63M45 65h20m9 0h62m-91 12h56" stroke="#77aaa2" stroke-width="3" stroke-linecap="round"/><path d="M192 40h48v20h-48zm24 20v17m-14 0h28" stroke="#55988e" fill="#d5ece7" stroke-width="2"/></svg><span class="card-plus"><AppIcon name="plus" :size="14" style="width:14px;height:14px"/></span></div>
-                <div class="card-copy"><span class="type-icon"><AppIcon name="code" :size="22"/></span><div><h2>Mermaid</h2><p>用文字绘制多种图表</p></div><AppIcon name="arrow"/></div>
+                <div class="card-copy"><span class="type-icon"><AppIcon name="code" :size="22"/></span><div><h2>代码图表</h2><p>用文字绘制多种图表</p></div><AppIcon name="arrow"/></div>
               </button>
             </div>
-            <div class="template-row"><span>从示例开始</span><button @click="create('flow', true)"><AppIcon name="flow" :size="15"/>项目审批流程<AppIcon name="arrow" :size="14"/></button><button @click="create('board', true)"><AppIcon name="board" :size="15"/>灵感收集板<AppIcon name="arrow" :size="14"/></button><span class="format-hint">支持导入 draw.io、Excalidraw 与 Mermaid</span></div>
+            <div class="template-row"><span>从示例开始</span><button @click="create('flow', true)"><AppIcon name="flow" :size="15"/>项目审批流程<AppIcon name="arrow" :size="14"/></button><button @click="create('board', true)"><AppIcon name="board" :size="15"/>灵感收集板<AppIcon name="arrow" :size="14"/></button><span class="format-hint">支持图形 XML、白板 JSON 与图表源码</span></div>
           </template>
           <section class="recent-section" aria-label="最近文档">
             <div class="section-title"><h2>最近文档 <small>{{ recent.length }}</small></h2><label class="search"><AppIcon name="search" :size="16"/><input v-model="search" placeholder="搜索本地文档" aria-label="搜索本地文档"></label></div>
             <div v-if="!visibleRecent.length" class="empty-state"><div class="empty-icon"><AppIcon name="folder" :size="30"/></div><h3>{{ search ? '没有匹配的文档' : '这里将收起你的每一个想法' }}</h3><p>{{ search ? '换一个关键词试试。' : '新建或打开文档后，草稿会自动保存在本机。' }}</p><button v-if="!search" class="text-button" @click="openFiles">打开第一个文件<AppIcon name="arrow" :size="16"/></button></div>
             <div v-else class="recent-list">
               <div v-for="record in visibleRecent" :key="record.id" class="recent-item">
-                <button class="recent-open" @click="openRecent(record)"><span class="recent-icon" :class="record.document.kind"><AppIcon :name="kindIcon(record.document.kind)" :size="22"/></span><span class="recent-title"><strong>{{ record.document.title }}</strong><small>{{ kindName(record.document.kind) }} · {{ record.document.kind === 'mermaid' ? '文本绘图' : `${record.document.scene.elements.length} 个元素` }}</small></span><time :datetime="record.document.updatedAt" :title="new Date(record.document.updatedAt).toLocaleString()">{{ date(record.document.updatedAt) }}</time><AppIcon name="arrow" :size="17"/></button>
+                <button class="recent-open" @click="openRecent(record)"><span class="recent-icon" :class="record.document.kind === 'mermaid' ? 'diagram' : record.document.kind"><AppIcon :name="kindIcon(record.document.kind)" :size="22"/></span><span class="recent-title"><strong>{{ record.document.title }}</strong><small>{{ kindName(record.document.kind) }} · {{ record.document.kind === 'mermaid' ? '文本绘图' : `${record.document.scene.elements.length} 个元素` }}</small></span><time :datetime="record.document.updatedAt" :title="new Date(record.document.updatedAt).toLocaleString()">{{ date(record.document.updatedAt) }}</time><AppIcon name="arrow" :size="17"/></button>
                 <button class="icon-button remove-recent" :aria-label="`移除草稿 ${record.document.title}`" title="移除本地草稿" @click="removeRecent(record)"><AppIcon name="trash" :size="16"/></button>
               </div>
             </div>
@@ -417,15 +420,15 @@ onBeforeUnmount(() => {
         <button class="tab-add" title="新建文档" aria-label="新建文档" @click="menu = 'new'"><AppIcon name="plus" :size="17"/></button>
         <button class="tab-rename" title="重命名当前文档" aria-label="重命名当前文档" @click="rename(active)"><AppIcon name="rename" :size="15"/></button>
       </div>
-      <MermaidEditor v-if="active.document.kind === 'mermaid'" :key="active.document.id" ref="editor" :source="active.document.source" :theme="effectiveTheme" @change="changeSource" @create-flow="copyMermaid" @status="status = $event"/>
+      <CodeDiagramEditor v-if="active.document.kind === 'mermaid'" :key="active.document.id" ref="editor" :source="active.document.source" :diagram-style="active.document.diagramStyle" :theme="effectiveTheme" @change="changeSource" @change-style="changeDiagramStyle" @create-flow="copyCodeDiagram" @status="status = $event"/>
       <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event" @export="exportAs"/>
     </main>
 
-    <footer class="status-bar"><span class="status-info">{{ home ? '流程图 · 自由白板 · Mermaid' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error' }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
+    <footer class="status-bar"><span class="status-info">{{ home ? '流程图 · 自由白板 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error' }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
 
     <template v-if="menu"><div class="menu-dismiss" @click="menu = null"></div><div class="popup-menu" :class="`menu-${menu}`" role="menu">
-      <template v-if="menu === 'new'"><p>新建文档</p><button role="menuitem" @click="create('flow')"><AppIcon name="flow"/>流程图<small>节点与连线</small></button><button role="menuitem" @click="create('board')"><AppIcon name="board"/>自由白板<small>笔迹与便签</small></button><button role="menuitem" @click="create('mermaid')"><AppIcon name="code"/>Mermaid<small>文本绘图</small></button></template>
-      <template v-else-if="menu === 'export'"><p>导出当前文档</p><button role="menuitem" @click="exportAs('svg')"><AppIcon name="export"/>SVG 矢量图</button><button role="menuitem" @click="exportAs('png')"><AppIcon name="export"/>PNG 图片</button><button role="menuitem" @click="exportAs('drawio')"><AppIcon name="flow"/>draw.io 文件<small>基础图形</small></button><button role="menuitem" @click="exportAs('excalidraw')"><AppIcon name="board"/>Excalidraw 文件<small>基础元素</small></button><button v-if="active?.document.kind === 'mermaid'" role="menuitem" @click="exportAs('mmd')"><AppIcon name="code"/>Mermaid 源码</button><button v-if="active?.document.importSource" role="menuitem" @click="exportAs('original')"><AppIcon name="download"/>导入时的原文件</button></template>
+      <template v-if="menu === 'new'"><p>新建文档</p><button role="menuitem" @click="create('flow')"><AppIcon name="flow"/>流程图<small>节点与连线</small></button><button role="menuitem" @click="create('board')"><AppIcon name="board"/>自由白板<small>笔迹与便签</small></button><button role="menuitem" @click="create('mermaid')"><AppIcon name="code"/>代码图表<small>文本绘图</small></button></template>
+      <template v-else-if="menu === 'export'"><p>导出当前文档</p><button role="menuitem" @click="exportAs('svg')"><AppIcon name="export"/>SVG 矢量图</button><button role="menuitem" @click="exportAs('png')"><AppIcon name="export"/>PNG 图片</button><button role="menuitem" @click="exportAs('drawio')"><AppIcon name="flow"/>图形 XML<small>基础图形</small></button><button role="menuitem" @click="exportAs('excalidraw')"><AppIcon name="board"/>白板 JSON<small>基础元素</small></button><button v-if="active?.document.kind === 'mermaid'" role="menuitem" @click="exportAs('mmd')"><AppIcon name="code"/>图表源码</button><button v-if="active?.document.importSource" role="menuitem" @click="exportAs('original')"><AppIcon name="download"/>导入时的原文件</button></template>
       <template v-else><p>外观</p><button v-for="option in [{ value: 'light', label: '浅色', icon: 'sun' }, { value: 'dark', label: '深色', icon: 'moon' }, { value: 'system', label: '跟随系统', icon: 'monitor' }]" :key="option.value" role="menuitemradio" :aria-checked="theme === option.value" @click="setTheme(option.value as 'light' | 'dark' | 'system')"><AppIcon :name="option.icon"/>{{ option.label }}<AppIcon v-if="theme === option.value" name="check" :size="16"/></button></template>
     </div></template>
 
@@ -436,7 +439,7 @@ onBeforeUnmount(() => {
       <section ref="modalPanel" class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><h2 id="modal-title">{{ modal.title }}</h2><button class="icon-button" title="关闭" aria-label="关闭对话框" @click="finishModal('cancel')"><AppIcon name="close"/></button></header><div class="modal-body">
         <p v-if="modal.text">{{ modal.text }}</p><input v-if="modal.kind === 'rename'" v-model="modal.value" class="rename-input" maxlength="200" aria-label="文档名称" @keydown.enter="finishModal('confirm')">
         <ul v-if="modal.lines" class="import-notes"><li v-for="(line, index) in modal.lines" :key="index">{{ line }}</li></ul>
-        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>流程与白板</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>白板提供荧光笔、整元素橡皮擦、分区框架和四套可编辑模板。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>Mermaid 工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；也可创建可编辑副本继续调整。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>本地草稿自动保存到当前浏览器/桌面工作区。Ctrl+S 保存可迁移的 .owflow 文件。draw.io 和 Excalidraw 导入支持基础元素，转换限制会单独提示。无边记和 Whiteboard 的专有文件格式暂不支持。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
+        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>流程与白板</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>白板提供荧光笔、整元素橡皮擦、分区框架和四套可编辑模板。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>代码图表工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；全局绘图风格提供 10 种预设，导出和可编辑副本保留同样的外观。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>本地草稿自动保存到当前浏览器/桌面工作区。Ctrl+S 保存可迁移的 .owflow 文件。图形 XML 和白板 JSON 支持基础元素导入，转换限制会单独提示。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
       </div><footer><template v-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
     </div>
   </div>

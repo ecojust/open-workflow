@@ -1,6 +1,7 @@
 import { DEFAULT_STYLE, clone, emptyScene, newId } from './types.ts'
 import type { DocumentKind, ElementStyle, Scene, SceneElement, WorkflowDocument } from './types.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from './appearance.ts'
+import { normalizeDiagramStyle } from './diagram-appearance.ts'
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 const MAX_ELEMENTS = 5000
@@ -90,7 +91,8 @@ export function validateDocument(value: unknown): WorkflowDocument {
   const doc: WorkflowDocument = {
     format: 'open-workflow', version: 1, id: string(raw.id, '文档 ID', 512) || newId('doc'),
     title: string(raw.title, '标题', 200) || '未命名', kind: choice(raw.kind, ['flow', 'board', 'mermaid'], '文档类型'),
-    scene: validateScene(raw.scene), source: string(raw.source ?? '', 'Mermaid 源码', 500000),
+    scene: validateScene(raw.scene), source: string(raw.source ?? '', '图表源码', 500000),
+    diagramStyle: normalizeDiagramStyle(raw.diagramStyle),
     createdAt: validDate(raw.createdAt), updatedAt: validDate(raw.updatedAt),
   }
   if (raw.importSource) {
@@ -118,9 +120,13 @@ export function contentKey(doc: WorkflowDocument): string {
     if (element.type === 'edge') return [...base, [element.from.x, element.from.y, element.from.nodeId ?? null], [element.to.x, element.to.y, element.to.nodeId ?? null], element.label, element.arrow, element.route]
     return [...base, element.points.map(point => [point.x, point.y]), ...(element.closed ? [true] : [])]
   })
-  return JSON.stringify([doc.title, doc.kind, doc.scene.background, doc.scene.grid, styleKey(sceneDefaultStyle(doc.scene)), elements, doc.source])
+  const identity: unknown[] = [doc.title, doc.kind, doc.scene.background, doc.scene.grid, styleKey(sceneDefaultStyle(doc.scene)), elements, doc.source]
+  const diagramStyle = normalizeDiagramStyle(doc.diagramStyle)
+  // Preserve v0.1.0 saved keys byte-for-byte for the default presentation.
+  if (diagramStyle !== 'classic') identity.push(diagramStyle)
+  return JSON.stringify(identity)
 }
-export const MERMAID_SAMPLE = `flowchart TD
+export const CODE_DIAGRAM_SAMPLE = `flowchart TD
   start([开始]) --> idea[整理想法]
   idea --> review{准备好了吗？}
   review -->|是| done([发布])
@@ -129,8 +135,8 @@ export const MERMAID_SAMPLE = `flowchart TD
 export function createDocument(kind: DocumentKind, template = false): WorkflowDocument {
   const time = new Date().toISOString()
   const doc: WorkflowDocument = {
-    format: 'open-workflow', version: 1, id: newId('doc'), title: kind === 'flow' ? '未命名流程图' : kind === 'board' ? '未命名白板' : '未命名 Mermaid',
-    kind, scene: emptyScene(), source: kind === 'mermaid' ? MERMAID_SAMPLE : '', createdAt: time, updatedAt: time,
+    format: 'open-workflow', version: 1, id: newId('doc'), title: kind === 'flow' ? '未命名流程图' : kind === 'board' ? '未命名白板' : '未命名代码图表',
+    kind, scene: emptyScene(), source: kind === 'mermaid' ? CODE_DIAGRAM_SAMPLE : '', diagramStyle: 'classic', createdAt: time, updatedAt: time,
   }
   if (template && kind === 'flow') {
     doc.title = '项目审批流程'

@@ -15,7 +15,7 @@ const safeText = (value: unknown): string => typeof value === 'string' ? value.s
 
 function finite(value: unknown, fallback = 0): number {
   if (value === undefined || value === null) return fallback
-  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e7) throw new Error('Excalidraw 图形包含无效或过大的坐标。')
+  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e7) throw new Error('白板 JSON 图形包含无效或过大的坐标。')
   return value
 }
 
@@ -51,31 +51,31 @@ function styleOf(element: Json, warnings: Set<string>): ElementStyle {
 }
 
 function worldPoints(element: Json, minimum = 2, maximum = 100000): { x: number; y: number }[] {
-  if (!Array.isArray(element.points) || element.points.length < minimum || element.points.length > maximum) throw new Error('Excalidraw 线条缺少有效的 points 数据。')
+  if (!Array.isArray(element.points) || element.points.length < minimum || element.points.length > maximum) throw new Error('白板 JSON 线条缺少有效的 points 数据。')
   const x = finite(element.x); const y = finite(element.y)
   return element.points.map(point => {
-    if (!Array.isArray(point) || point.length < 2) throw new Error('Excalidraw 线条坐标格式不正确。')
+    if (!Array.isArray(point) || point.length < 2) throw new Error('白板 JSON 线条坐标格式不正确。')
     return { x: finite(point[0]) + x, y: finite(point[1]) + y }
   })
 }
 
 /** Basic structural import, without executing embedded content or loading remote assets. */
-export function importExcalidraw(text: string): ImportedScene {
-  if (text.length > 20 * 1024 * 1024) throw new Error('Excalidraw 文件过大，最多支持 20 MB。')
+export function importBoardJson(text: string): ImportedScene {
+  if (text.length > 20 * 1024 * 1024) throw new Error('白板 JSON 文件过大，最多支持 20 MB。')
   let data: unknown
-  try { data = JSON.parse(text) } catch { throw new Error('Excalidraw JSON 格式不正确。') }
-  if (!isObject(data) || data.type !== 'excalidraw' || !Array.isArray(data.elements)) throw new Error('文件不是有效的 Excalidraw 场景。')
-  // Bound text is a separate Excalidraw element but merges into its container here.
+  try { data = JSON.parse(text) } catch { throw new Error('白板 JSON 格式不正确。') }
+  if (!isObject(data) || data.type !== 'excalidraw' || !Array.isArray(data.elements)) throw new Error('文件不是有效的白板 JSON 场景。')
+  // The interchange format stores bound text separately; merge it into its container here.
   if (data.elements.length > 10000) throw new Error('文件元素过多；单页最多支持 5000 个转换后的图形。')
   const warnings = new Set<string>()
-  if (data.version !== undefined && data.version !== 1 && data.version !== 2) warnings.add('文件使用较新的 Excalidraw 版本，部分特性可能无法转换。')
+  if (data.version !== undefined && data.version !== 1 && data.version !== 2) warnings.add('文件使用较新的白板 JSON 版本，部分特性可能无法转换。')
   const source = data.elements.filter((element): element is Json => {
-    if (!isObject(element)) throw new Error('Excalidraw 元素格式不正确。')
+    if (!isObject(element)) throw new Error('白板 JSON 元素格式不正确。')
     return element.isDeleted !== true
   })
   const sourceMap = new Map<string, Json>()
   for (const element of source) {
-    if (typeof element.id !== 'string' || !element.id || sourceMap.has(element.id)) throw new Error('Excalidraw 元素缺少 ID 或存在重复 ID。')
+    if (typeof element.id !== 'string' || !element.id || sourceMap.has(element.id)) throw new Error('白板 JSON 元素缺少 ID 或存在重复 ID。')
     sourceMap.set(element.id, element)
   }
   const elements: SceneElement[] = []
@@ -153,8 +153,8 @@ export function importExcalidraw(text: string): ImportedScene {
   return { title: typeof appState.name === 'string' && appState.name ? appState.name : '导入白板', scene: { elements, background: color(appState.viewBackgroundColor, '#ffffff', warnings), grid: typeof appState.gridSize === 'number' && appState.gridSize > 0, ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
 }
 
-/** Emits ordinary Excalidraw JSON and image files, without bundling its editor. */
-export function exportExcalidraw(scene: Scene): string {
+/** Export editable board JSON with embedded image files. */
+export function exportBoardJson(scene: Scene): string {
   const elements: Json[] = []
   const files: Record<string, Json> = Object.create(null)
   const updated = Date.now()

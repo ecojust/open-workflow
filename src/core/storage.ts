@@ -1,4 +1,5 @@
 import { contentKey, parseDocument, serializeDocument } from './documents.ts'
+import { normalizeDiagramStyle } from './diagram-appearance.ts'
 import type { WorkflowDocument } from './types.ts'
 
 export interface DraftRecord { id: string; document: WorkflowDocument; savedKey: string | null; lastOpened: number }
@@ -8,6 +9,7 @@ function migrateSavedKey(document: WorkflowDocument, savedKey: unknown): string 
   if (typeof savedKey !== 'string') return null
   const currentKey = contentKey(document)
   if (savedKey === currentKey) return savedKey
+  if (normalizeDiagramStyle(document.diagramStyle) !== 'classic') return savedKey
   const elements = document.scene.elements.map(element => {
     const s = element.style
     const base = [element.id, element.type, element.locked, [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, s.dashed]]

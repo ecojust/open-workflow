@@ -11,10 +11,10 @@ const children = (element: Element, name: string): Element[] => Array.from(eleme
 const direct = (element: Element, name: string): Element | undefined => children(element, name)[0]
 
 function parseXml(text: string): Document {
-  if (text.length > MAX_TEXT) throw new Error('draw.io 文件过大，最多支持 20 MB。')
+  if (text.length > MAX_TEXT) throw new Error('图形 XML 文件过大，最多支持 20 MB。')
   if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(text)) throw new Error('不支持包含 DOCTYPE 或实体声明的 XML 文件。')
   const document = new DOMParser().parseFromString(text, 'application/xml')
-  if (!document.documentElement || document.getElementsByTagName('parsererror').length) throw new Error('draw.io XML 格式不正确。')
+  if (!document.documentElement || document.getElementsByTagName('parsererror').length) throw new Error('图形 XML 格式不正确。')
   return document
 }
 
@@ -26,7 +26,7 @@ function finite(value: string | null, fallback = 0): number {
 }
 
 function inflateDiagram(value: string): string {
-  if (!/^[A-Za-z\d+/=\s]+$/.test(value)) throw new Error('draw.io 压缩页面不是有效的 Base64 数据。')
+  if (!/^[A-Za-z\d+/=\s]+$/.test(value)) throw new Error('图形 XML 压缩页面不是有效的 Base64 数据。')
   try {
     const binary = Uint8Array.from(atob(value.replace(/\s/g, '')), character => character.charCodeAt(0))
     const chunks: Uint8Array[] = []
@@ -43,7 +43,7 @@ function inflateDiagram(value: string): string {
     for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length }
     return decodeURIComponent(strFromU8(output))
   } catch (error) {
-    throw new Error(`无法解压 draw.io 页面：${error instanceof Error ? error.message : '压缩数据无效'}`)
+    throw new Error(`无法解压 图形 XML 页面：${error instanceof Error ? error.message : '压缩数据无效'}`)
   }
 }
 
@@ -113,7 +113,7 @@ function safeImage(value: string | undefined): string | undefined {
 function importModel(model: Element, title: string): ImportedScene {
   const warnings = new Set<string>()
   const root = direct(model, 'root')
-  if (!root) throw new Error('draw.io 页面缺少 root 图形数据。')
+  if (!root) throw new Error('图形 XML 页面缺少 root 图形数据。')
   const cells = Array.from(root.getElementsByTagName('mxCell'))
   if (cells.length > MAX_ELEMENTS + 2) throw new Error('单页最多支持 5000 个图形。')
   const cellMap = new Map<string, Element>()
@@ -122,10 +122,10 @@ function importModel(model: Element, title: string): ImportedScene {
   for (const cell of cells) {
     const wrapper = cell.parentNode?.nodeType === 1 ? cell.parentNode as Element : null
     const id = cell.getAttribute('id') || (wrapper?.tagName !== 'root' ? wrapper?.getAttribute('id') : null)
-    if (!id || cellMap.has(id)) throw new Error('draw.io 图形缺少 ID 或存在重复 ID。')
+    if (!id || cellMap.has(id)) throw new Error('图形 XML 图形缺少 ID 或存在重复 ID。')
     const targetId = cell.getAttribute('openWorkflowId') || id
     if (cell.getAttribute('vertex') === '1' || cell.getAttribute('edge') === '1') {
-      if (usedIds.has(targetId)) throw new Error('draw.io 图形存在重复的目标 ID。')
+      if (usedIds.has(targetId)) throw new Error('图形 XML 图形存在重复的目标 ID。')
       usedIds.add(targetId)
     }
     cellMap.set(id, cell); idMap.set(id, targetId)
@@ -135,7 +135,7 @@ function importModel(model: Element, title: string): ImportedScene {
   function position(id: string): { x: number; y: number; width: number; height: number } {
     const cached = positions.get(id)
     if (cached) return cached
-    if (ancestors.has(id)) throw new Error('draw.io 图形存在循环的父子关系。')
+    if (ancestors.has(id)) throw new Error('图形 XML 图形存在循环的父子关系。')
     ancestors.add(id)
     const cell = cellMap.get(id)
     const geometry = cell ? direct(cell, 'mxGeometry') : undefined
@@ -219,13 +219,13 @@ function importModel(model: Element, title: string): ImportedScene {
   return { title, scene: { elements, background: color(model.getAttribute('background') || undefined, '#ffffff', warnings), grid: model.getAttribute('grid') !== '0', ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
 }
 
-/** Imports a documented subset of draw.io XML. Unsupported features produce warnings. */
-export function importDrawio(text: string): ImportedScene[] {
+/** Import editable graph XML; unsupported features produce warnings. */
+export function importGraphXml(text: string): ImportedScene[] {
   const root = parseXml(text).documentElement
   if (root.tagName === 'mxGraphModel') return [importModel(root, '导入流程图')]
-  if (root.tagName !== 'mxfile') throw new Error('文件不是 draw.io 的 mxfile 或 mxGraphModel 格式。')
+  if (root.tagName !== 'mxfile') throw new Error('文件不符合图形 XML 的 mxfile 或 mxGraphModel 格式。')
   const diagrams = children(root, 'diagram')
-  if (!diagrams.length) throw new Error('draw.io 文件没有可导入的页面。')
+  if (!diagrams.length) throw new Error('图形 XML 文件没有可导入的页面。')
   if (diagrams.length > 100) throw new Error('一次最多导入 100 个页面。')
   return diagrams.map((diagram, index) => {
     let model = direct(diagram, 'mxGraphModel')
@@ -245,7 +245,7 @@ function writeStyle(style: ElementStyle): string {
 }
 
 /** Exports ordinary editable mxCells; own stroke metadata preserves freehand round trips. */
-export function exportDrawio(scene: Scene, title: string): string {
+export function exportGraphXml(scene: Scene, title: string): string {
   const cellId = (id: string): string => `wf-${id}`
   const point = (as: string, value: Endpoint): string => `<mxPoint x="${value.x}" y="${value.y}" as="${as}"/>`
   const elements = scene.elements.map(element => {

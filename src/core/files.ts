@@ -1,8 +1,9 @@
 import { createDocument, MAX_FILE_BYTES, parseDocument, serializeDocument, validateScene } from './documents.ts'
-import { compileMermaid } from './mermaid.ts'
+import { compileCodeDiagram } from './code-diagram.ts'
+import { applyDiagramStyle } from './diagram-appearance.ts'
 import { sceneToSvg } from './svg.ts'
-import { importDrawio, exportDrawio } from '../formats/drawio.ts'
-import { importExcalidraw, exportExcalidraw } from '../formats/excalidraw.ts'
+import { importGraphXml, exportGraphXml } from '../formats/graph-xml.ts'
+import { importBoardJson, exportBoardJson } from '../formats/board-json.ts'
 import type { Scene, WorkflowDocument } from './types.ts'
 
 export interface ImportResult { documents: WorkflowDocument[]; warnings: string[]; nativeFormat: boolean }
@@ -22,12 +23,12 @@ export function importText(name: string, text: string): ImportResult {
   if (/\.(mmd|mermaid)$/i.test(name) || /^(?:%%[^\n]*\n\s*)*(?:flowchart|graph|sequenceDiagram)\b/.test(clean)) {
     const doc = createDocument('mermaid')
     doc.title = fileStem(name); doc.source = text
-    if (text.length > 500000) throw new Error('Mermaid 源码超过 500000 字符。')
+    if (text.length > 500000) throw new Error('图表源码超过 500000 字符。')
     doc.importSource = { name, format: 'mermaid', text }
     return saveableImport({ documents: [doc], warnings: [], nativeFormat: false })
   }
   if (clean.startsWith('<')) {
-    const pages = importDrawio(clean)
+    const pages = importGraphXml(clean)
     return saveableImport({ documents: pages.map(page => {
       const doc = createDocument('flow')
       doc.title = pages.length > 1 ? `${fileStem(name)} · ${page.title}`.slice(0, 200) : fileStem(name)
@@ -37,10 +38,10 @@ export function importText(name: string, text: string): ImportResult {
     }), warnings: [...new Set(pages.flatMap(page => page.warnings))], nativeFormat: false })
   }
   let json: Record<string, unknown>
-  try { json = JSON.parse(clean) } catch { throw new Error('无法识别此文件。请选择 .owflow、draw.io XML、.excalidraw 或 Mermaid 文本。') }
+  try { json = JSON.parse(clean) } catch { throw new Error('无法识别此文件。请选择工作流文件、图形 XML、白板 JSON 或图表源码。') }
   if (json?.format === 'open-workflow') return saveableImport({ documents: [parseDocument(clean)], warnings: [], nativeFormat: true })
   if (json?.type === 'excalidraw') {
-    const imported = importExcalidraw(clean)
+    const imported = importBoardJson(clean)
     const doc = createDocument('board')
     doc.title = fileStem(name); doc.scene = validateScene(imported.scene)
     doc.importSource = { name, format: 'excalidraw', text }
@@ -49,7 +50,7 @@ export function importText(name: string, text: string): ImportResult {
   throw new Error('JSON 文件格式不受支持。')
 }
 export function documentScene(doc: WorkflowDocument): Scene {
-  return doc.kind === 'mermaid' ? compileMermaid(doc.source).scene : doc.scene
+  return doc.kind === 'mermaid' ? applyDiagramStyle(compileCodeDiagram(doc.source).scene, doc.diagramStyle) : doc.scene
 }
 export function documentBytes(doc: WorkflowDocument): Uint8Array { return new TextEncoder().encode(serializeDocument(doc)) }
 export async function exportDocument(doc: WorkflowDocument, format: ExportFormat): Promise<{ name: string; bytes: Uint8Array; mime: string }> {
@@ -60,12 +61,12 @@ export async function exportDocument(doc: WorkflowDocument, format: ExportFormat
     return { name: safeFilename(doc.importSource.name), bytes: new TextEncoder().encode(doc.importSource.text), mime: 'application/octet-stream' }
   }
   if (format === 'mmd') {
-    if (doc.kind !== 'mermaid') throw new Error('仅 Mermaid 文档可以导出为 .mmd 源码。')
+    if (doc.kind !== 'mermaid') throw new Error('仅代码图表文档可以导出为 .mmd 源码。')
     return encode(doc.source, 'mmd', 'text/plain;charset=utf-8')
   }
   const scene = documentScene(doc)
-  if (format === 'drawio') return encode(exportDrawio(scene, doc.title), 'drawio', 'application/xml')
-  if (format === 'excalidraw') return encode(exportExcalidraw(scene), 'excalidraw', 'application/json')
+  if (format === 'drawio') return encode(exportGraphXml(scene, doc.title), 'drawio', 'application/xml')
+  if (format === 'excalidraw') return encode(exportBoardJson(scene), 'excalidraw', 'application/json')
   const svg = sceneToSvg(scene, { background: true })
   if (format === 'svg') return encode(svg, 'svg', 'image/svg+xml')
   const source = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement

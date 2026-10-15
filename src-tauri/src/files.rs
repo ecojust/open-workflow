@@ -147,7 +147,7 @@ impl FileStore {
             }
             let hash = stamp(&bytes);
             let text = String::from_utf8(bytes)
-                .map_err(|_| "请选择 UTF-8 编码的工作流、白板或 Mermaid 文本文件。")?;
+                .map_err(|_| "请选择 UTF-8 编码的工作流、白板或代码图表文本文件。")?;
             output.push(NativeFile {
                 name: name(&path)?,
                 path: path_string(&path)?,

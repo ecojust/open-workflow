@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DOMParser } from '@xmldom/xmldom'
 import { compileChartDiagram, CHART_TEMPLATES } from '../src/core/diagrams/charts.ts'
-import { MermaidSyntaxError } from '../src/core/diagrams/common.ts'
+import { DiagramSyntaxError } from '../src/core/diagrams/common.ts'
 import { createDocument, serializeDocument, parseDocument } from '../src/core/documents.ts'
 import { sceneToSvg } from '../src/core/svg.ts'
 
@@ -13,7 +13,7 @@ const element = (result, id) => {
 }
 const near = (actual, expected, tolerance = 1e-7) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`)
 const invalid = (source, pattern, line) => assert.throws(() => compileChartDiagram(source), error => {
-  assert.ok(error instanceof MermaidSyntaxError, error.stack)
+  assert.ok(error instanceof DiagramSyntaxError, error.stack)
   assert.match(error.message, pattern)
   if (line) assert.equal(error.line, line)
   return true

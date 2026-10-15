@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_STYLE } from '../src/core/types.ts'
 import { createDocument, contentKey, serializeDocument, parseDocument, validateScene, DocumentHistory } from '../src/core/documents.ts'
-import { importDrawio, exportDrawio } from '../src/formats/drawio.ts'
-import { importExcalidraw, exportExcalidraw } from '../src/formats/excalidraw.ts'
+import { importGraphXml, exportGraphXml } from '../src/formats/graph-xml.ts'
+import { importBoardJson, exportBoardJson } from '../src/formats/board-json.ts'
 import { DOMParser } from '@xmldom/xmldom'
-import { compileMermaid } from '../src/core/mermaid.ts'
+import { compileCodeDiagram } from '../src/core/code-diagram.ts'
 globalThis.DOMParser = DOMParser
 const shapes = ['triangle', 'hexagon', 'star', 'parallelogram', 'cylinder', 'cloud', 'frame']
 function scene() {
@@ -29,7 +29,7 @@ test('new board geometry, groups, closed fills and history survive native save',
 })
 test('interchange files keep extended shape metadata, flat groups and filled polygons editable on reimport', () => {
   const expected = scene()
-  for (const result of [importDrawio(exportDrawio(expected, '白板'))[0].scene, importExcalidraw(exportExcalidraw(expected)).scene]) {
+  for (const result of [importGraphXml(exportGraphXml(expected, '白板'))[0].scene, importBoardJson(exportBoardJson(expected)).scene]) {
     assert.equal(result.elements.length, expected.elements.length)
     for (const original of expected.elements) {
       const actual = result.elements.find(element => element.id === original.id)
@@ -46,16 +46,16 @@ test('interchange files keep extended shape metadata, flat groups and filled pol
 test('large closed strokes export without function argument overflow and reopen without an extra vertex', () => {
   const points = Array.from({ length: 100000 }, (_, index) => ({ x: index % 400, y: Math.floor(index / 400) }))
   const expected = { background: '#fff', grid: false, elements: [{ id: 'large', type: 'stroke', points, closed: true, locked: false, style: { ...DEFAULT_STYLE, fill: '#fff4ad' } }] }
-  const result = importExcalidraw(exportExcalidraw(expected)).scene
+  const result = importBoardJson(exportBoardJson(expected)).scene
   assert.equal(result.elements[0].points.length, points.length)
   assert.deepEqual(result.elements[0].points, points)
   validateScene(result)
 })
 
 test('interchange round trips preserve filled chart polygons below labels and interleaved connectors', () => {
-  const expected = compileMermaid('pie showData\n"设计": 40\n"开发": 60').scene
+  const expected = compileCodeDiagram('pie showData\n"设计": 40\n"开发": 60').scene
   const ids = expected.elements.map(element => element.id)
-  for (const actual of [importDrawio(exportDrawio(expected, '比例图'))[0].scene, importExcalidraw(exportExcalidraw(expected)).scene]) {
+  for (const actual of [importGraphXml(exportGraphXml(expected, '比例图'))[0].scene, importBoardJson(exportBoardJson(expected)).scene]) {
     assert.deepEqual(actual.elements.map(element => element.id), ids, 'Import must preserve mixed element layer order')
     const lastPolygon = actual.elements.findLastIndex(element => element.type === 'stroke' && element.closed)
     assert.ok(actual.elements.slice(lastPolygon + 1).some(element => element.type === 'shape' && element.text), 'Labels stay visible above the filled sectors')

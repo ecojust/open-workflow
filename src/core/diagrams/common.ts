@@ -5,16 +5,16 @@ export type DiagramKind = 'flowchart' | 'sequence' | 'class' | 'state' | 'er' | 
 export interface DiagramResult { kind: DiagramKind; scene: Scene; warnings: string[] }
 export interface DiagramTemplate { kind?: DiagramKind; id: string; title: string; description: string; category: string; source: string }
 export interface SourceLine { text: string; line: number }
-export class MermaidSyntaxError extends Error {
+export class DiagramSyntaxError extends Error {
   readonly line: number
   readonly column: number
   constructor(message: string, line: number, column = 1) {
     super(`第 ${line} 行${column > 1 ? `，第 ${column} 列` : ''}：${message}`)
-    this.name = 'MermaidSyntaxError'; this.line = line; this.column = column
+    this.name = 'DiagramSyntaxError'; this.line = line; this.column = column
   }
 }
 export function sourceLines(source: string): SourceLine[] {
-  if (source.length > 200_000) throw new MermaidSyntaxError('源码不能超过 200,000 个字符。', 1)
+  if (source.length > 200_000) throw new DiagramSyntaxError('源码不能超过 200,000 个字符。', 1)
   return source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((text, index) => ({ text: text.trimEnd(), line: index + 1 })).filter(({ text }) => text.trim() && !/^\s*%%(?!\{)/.test(text))
 }
 export function diagramStyle(changes: Partial<ElementStyle> = {}): ElementStyle {
@@ -34,6 +34,6 @@ export function diagramStroke(id: string, points: Point[], style: Partial<Elemen
   return { id, type: 'stroke', points: points.map(point => ({ ...point })), style: diagramStyle({ fill: 'none', ...style }), locked: false, ...(closed ? { closed: true } : {}) }
 }
 export function finishDiagram(kind: DiagramKind, elements: SceneElement[], warnings: string[] = []): DiagramResult {
-  if (elements.length > 3500) throw new MermaidSyntaxError('图表过于复杂，请减少节点或数据。', 1)
+  if (elements.length > 3500) throw new DiagramSyntaxError('图表过于复杂，请减少节点或数据。', 1)
   return { kind, scene: validateScene({ elements, background: '#ffffff', grid: false }), warnings: [...new Set(warnings)] }
 }

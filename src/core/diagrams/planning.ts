@@ -1,13 +1,13 @@
 import type { SceneElement, ShapeElement } from '../types.ts'
 import {
-  MermaidSyntaxError, diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram, sourceLines,
+  DiagramSyntaxError, diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram, sourceLines,
   type DiagramResult, type DiagramTemplate, type SourceLine,
 } from './common.ts'
 
 const COLORS = ['#dbeafe', '#dcfce7', '#fef3c7', '#fce7f3', '#ede9fe', '#cffafe']
 const INKS = ['#2563eb', '#15803d', '#b45309', '#be185d', '#7c3aed', '#0e7490']
 const ID = '[\\p{L}\\p{N}_-]+'
-function fail(message: string, line: number): never { throw new MermaidSyntaxError(message, line) }
+function fail(message: string, line: number): never { throw new DiagramSyntaxError(message, line) }
 
 function content(line: SourceLine): string {
   let quote = ''; let escaped = false

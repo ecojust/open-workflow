@@ -1,3 +1,5 @@
+import type { DiagramStyleId } from './diagram-appearance.ts'
+
 export type DocumentKind = 'flow' | 'board' | 'mermaid'
 export interface Point { x: number; y: number }
 export interface ElementStyle {
@@ -56,8 +58,10 @@ export interface WorkflowDocument {
   title: string
   kind: DocumentKind
   scene: Scene
-  /** Mermaid source is authoritative; its generated scene is never edited in place. */
+  /** Source is authoritative; its generated scene is never edited in place. */
   source: string
+  /** Presentation only: source remains authoritative and unchanged. */
+  diagramStyle?: DiagramStyleId
   createdAt: string
   updatedAt: string
   importSource?: { name: string; format: string; text: string }

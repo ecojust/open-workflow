@@ -2,14 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DOMParser } from '@xmldom/xmldom'
 import { compileStructureDiagram as compile, STRUCTURAL_TEMPLATES } from '../src/core/diagrams/structure.ts'
-import { MermaidSyntaxError } from '../src/core/diagrams/common.ts'
+import { DiagramSyntaxError } from '../src/core/diagrams/common.ts'
 import { sceneToSvg, elementToSvg } from '../src/core/svg.ts'
 import { createDocument, serializeDocument, parseDocument, validateScene } from '../src/core/documents.ts'
 import { edgePoints } from '../src/core/geometry.ts'
 const shapes = result => result.scene.elements.filter(element => element.type === 'shape')
 const edges = result => result.scene.elements.filter(element => element.type === 'edge')
 const texts = result => shapes(result).map(node => node.text)
-const invalid = (source, line, message) => assert.throws(() => compile(source), error => error instanceof MermaidSyntaxError && error.line === line && (!message || error.message.includes(message)))
+const invalid = (source, line, message) => assert.throws(() => compile(source), error => error instanceof DiagramSyntaxError && error.line === line && (!message || error.message.includes(message)))
 
 test('all seven rich templates deterministically compile, export valid SVG and round trip through native documents', () => {
   assert.equal(STRUCTURAL_TEMPLATES.length, 7)

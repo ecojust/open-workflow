@@ -1,7 +1,7 @@
 import type { ElementStyle, Point, SceneElement } from '../types.ts'
 import {
   diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram,
-  MermaidSyntaxError, sourceLines,
+  DiagramSyntaxError, sourceLines,
   type DiagramResult, type DiagramTemplate,
 } from './common.ts'
 
@@ -9,7 +9,7 @@ type Line = { text: string; line: number }
 const NUMBER = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
 const COLORS = ['#6389e7', '#61b9a0', '#f0b45b', '#ad86d6', '#e78291', '#5bafca', '#bdba5a', '#bc8e70']
 const DAY = 86_400_000
-const fail = (message: string, at: Line): never => { throw new MermaidSyntaxError(message, at.line) }
+const fail = (message: string, at: Line): never => { throw new DiagramSyntaxError(message, at.line) }
 const style = (fill: string, stroke = '#ffffff'): Partial<ElementStyle> => ({ fill, stroke, strokeWidth: 1.5 })
 
 function text(value: string, at: Line): string {
@@ -347,8 +347,6 @@ function quadrant(lines: Line[]): DiagramResult {
   return finishDiagram('quadrant', elements)
 }
 
-/* Syntax reference only, no upstream implementation: Mermaid docs pinned at
- * e28fbd9ded0a07ba9569e51be4764c1ad4daa8f6, syntax/{sankey,radar,treemap}.md. */
 function csv(value: string, at: Line): string[] {
   const fields: string[] = []
   let index = 0

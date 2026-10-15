@@ -1,7 +1,7 @@
 import type { SceneElement, ShapeElement, Point, EdgeElement } from '../types.ts'
 import { center, edgePoints } from '../geometry.ts'
 import { wrapText } from '../svg.ts'
-import { MermaidSyntaxError, sourceLines, diagramNode, diagramText, diagramEdge, diagramStroke, finishDiagram, type DiagramResult, type DiagramTemplate, type SourceLine } from './common.ts'
+import { DiagramSyntaxError, sourceLines, diagramNode, diagramText, diagramEdge, diagramStroke, finishDiagram, type DiagramResult, type DiagramTemplate, type SourceLine } from './common.ts'
 
 type Direction = 'LR' | 'RL' | 'TB' | 'TD' | 'BT'
 interface Box { key: string; title: string; fields: string[]; methods: string[]; stereotype: string; width: number; height: number; x: number; y: number; shape?: ShapeElement['shape']; group?: string; line: number }
@@ -9,7 +9,7 @@ interface Link { a: string; b: string; label: string; line: number; op?: string;
 const ID = '[\\p{L}_][\\p{L}\\p{N}_-]*'
 const ident = new RegExp(`^${ID}$`, 'u')
 const PALETTE = ['#2563eb', '#059669', '#9333ea', '#d97706', '#dc2626', '#0891b2']
-function fail(message: string, line: number): never { throw new MermaidSyntaxError(message, line) }
+function fail(message: string, line: number): never { throw new DiagramSyntaxError(message, line) }
 function value(text: string, line: number): string {
   text = text.trim()
   if (text.length > 2000) fail('单项文本不能超过 2,000 个字符。', line)

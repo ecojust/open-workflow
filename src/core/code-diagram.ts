@@ -1,18 +1,18 @@
-import { MermaidSyntaxError, type DiagramResult } from './diagrams/common.ts'
+import { DiagramSyntaxError, type DiagramResult } from './diagrams/common.ts'
 import { compileStructureDiagram } from './diagrams/structure.ts'
 import { compileChartDiagram } from './diagrams/charts.ts'
 import { compilePlanningDiagram } from './diagrams/planning.ts'
 import { DEFAULT_STYLE, type EdgeElement, type ElementStyle, type Scene, type SceneElement, type ShapeElement } from './types.ts'
 import { layoutScene } from './layout.ts'
 
-/** This is our own deliberately bounded Mermaid-compatible parser, not Mermaid's renderer. */
-export type MermaidResult = DiagramResult
-export { MermaidSyntaxError } from './diagrams/common.ts'
+/** Compile the supported diagram language into our editable scene model. */
+export type CodeDiagramResult = DiagramResult
+export { DiagramSyntaxError } from './diagrams/common.ts'
 interface Statement { text: string; line: number }
 const MAX_NODES = 400, MAX_EDGES = 800
 const ID = '[A-Za-z0-9_\\u0080-\\uFFFF]+(?:[-.][A-Za-z0-9_\\u0080-\\uFFFF]+)*'
 const idAtStart = new RegExp(`^${ID}`)
-const fail = (message: string, statement: Statement, column = 1): never => { throw new MermaidSyntaxError(message, statement.line, column) }
+const fail = (message: string, statement: Statement, column = 1): never => { throw new DiagramSyntaxError(message, statement.line, column) }
 const style = (changes: Partial<ElementStyle> = {}): ElementStyle => ({ ...DEFAULT_STYLE, ...changes, strokePattern: changes.strokePattern ?? (changes.dashed ? 'dashed' : 'solid') })
 
 /** Semicolons/comments are separators only outside labels, preserving their original line numbers. */
@@ -34,12 +34,12 @@ function statements(source: string): Statement[] {
     }
     if (c === '"') { quote = c; text += c; continue }
     if (c === '%' && source[i + 1] === '%' && !brackets.length) {
-      if (source[i + 2] === '{') throw new MermaidSyntaxError('暂不支持 Mermaid 初始化指令。', line)
+      if (source[i + 2] === '{') throw new DiagramSyntaxError('暂不支持图表初始化指令。', line)
       while (i < source.length && source[i] !== '\n') i++
       flush(); line++; startLine = line; continue
     }
     if (c === '\n') {
-      if (brackets.length) throw new MermaidSyntaxError('节点标签未闭合；换行请写为 <br/> 或 \\n。', startLine)
+      if (brackets.length) throw new DiagramSyntaxError('节点标签未闭合；换行请写为 <br/> 或 \\n。', startLine)
       flush(); line++; startLine = line; continue
     }
     if (c === ';' && !brackets.length) { flush(); continue }
@@ -47,13 +47,13 @@ function statements(source: string): Statement[] {
     else if ('])}'.includes(c)) {
       const open = brackets.pop()
       if (open !== ({ ']': '[', ')': '(', '}': '{' } as Record<string, string>)[c]) {
-        throw new MermaidSyntaxError(`不匹配的括号“${c}”。`, line)
+        throw new DiagramSyntaxError(`不匹配的括号“${c}”。`, line)
       }
     }
     text += c
   }
-  if (quote) throw new MermaidSyntaxError('字符串缺少结束引号。', startLine)
-  if (brackets.length) throw new MermaidSyntaxError('节点标签缺少结束括号。', startLine)
+  if (quote) throw new DiagramSyntaxError('字符串缺少结束引号。', startLine)
+  if (brackets.length) throw new DiagramSyntaxError('节点标签缺少结束括号。', startLine)
   flush()
   return result
 }
@@ -65,7 +65,7 @@ function labelText(value: string, warnings: Set<string>, statement?: Statement):
     .replace(/<br\s*\/?\s*>/gi, '\n')
     .replace(/&quot;|#quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
   if (/<[^>]+>/.test(label)) warnings.add('HTML 标签按纯文本显示；不执行 HTML 或脚本。')
-  if (label.length > 2_000) throw new MermaidSyntaxError('单个标签不能超过 2,000 个字符。', statement?.line ?? 1)
+  if (label.length > 2_000) throw new DiagramSyntaxError('单个标签不能超过 2,000 个字符。', statement?.line ?? 1)
   return label
 }
 function shape(id: string, text: string, kind: ShapeElement['shape'], x = 0, y = 0, width?: number, height?: number): ShapeElement {
@@ -146,7 +146,7 @@ function readArrow(statement: Statement, offset: number, warnings: Set<string>):
   return { end, label, arrow: token.startsWith('<') ? 'both' : token.endsWith('>') ? 'end' : 'none', dashed: token.includes('.'), thick: token.includes('=') }
 }
 
-function compileFlow(statements: Statement[], direction: 'TB' | 'LR' | 'RL' | 'BT'): MermaidResult {
+function compileFlow(statements: Statement[], direction: 'TB' | 'LR' | 'RL' | 'BT'): CodeDiagramResult {
   const nodes = new Map<string, ShapeElement>(), edges: EdgeElement[] = [], warnings = new Set<string>()
   const addNode = (token: NodeToken, statement: Statement) => {
     const old = nodes.get(token.id)
@@ -168,14 +168,14 @@ function compileFlow(statements: Statement[], direction: 'TB' | 'LR' | 'RL' | 'B
       node = next; cursor = next.end
     }
   }
-  if (!nodes.size) throw new MermaidSyntaxError('请至少添加一个节点，例如 A[开始] --> B[结束]。', 2)
+  if (!nodes.size) throw new DiagramSyntaxError('请至少添加一个节点，例如 A[开始] --> B[结束]。', 2)
   return { kind: 'flowchart', scene: layoutScene({ elements: [...edges, ...nodes.values()], background: '#ffffff', grid: true }, direction), warnings: [...warnings] }
 }
 
 interface Participant { id: string; name: string; actor: boolean }
 type SequenceItem = { type: 'message'; from: string; to: string; text: string; dashed: boolean; arrow: EdgeElement['arrow']; number?: number }
   | { type: 'note'; side: 'left of' | 'right of' | 'over'; ids: string[]; text: string }
-function compileSequence(statements: Statement[]): MermaidResult {
+function compileSequence(statements: Statement[]): CodeDiagramResult {
   const participants = new Map<string, Participant>(), items: SequenceItem[] = [], warnings = new Set<string>()
   let number: number | undefined, increment = 1
   const ensure = (id: string, statement: Statement) => {
@@ -211,7 +211,7 @@ function compileSequence(statements: Statement[]): MermaidResult {
     }
     fail('暂不支持此时序语法。支持 participant、actor、消息箭头、Note 和 autonumber；暂不支持激活区、循环和条件分组。', statement)
   }
-  if (!participants.size) throw new MermaidSyntaxError('请添加参与者或消息，例如 Alice->>Bob: 你好。', 2)
+  if (!participants.size) throw new DiagramSyntaxError('请添加参与者或消息，例如 Alice->>Bob: 你好。', 2)
   const elements: SceneElement[] = [], list = [...participants.values()], centers = new Map(list.map((person, i) => [person.id, 160 + i * 260]))
   let y = 150, counter = 0
   const edge = (x1: number, y1: number, x2: number, y2: number, dashed: boolean, arrow: EdgeElement['arrow']) => {
@@ -250,25 +250,25 @@ function compileSequence(statements: Statement[]): MermaidResult {
   return { kind: 'sequence', scene: { elements: [...lifelines, ...elements, ...headers], background: '#ffffff', grid: false }, warnings: [...warnings] }
 }
 
-export function compileMermaid(source: string): MermaidResult {
-  if (typeof source !== 'string') throw new MermaidSyntaxError('源码必须是文本。', 1)
-  if (source.length > 200_000) throw new MermaidSyntaxError('源码不能超过 200,000 个字符。', 1)
+export function compileCodeDiagram(source: string): CodeDiagramResult {
+  if (typeof source !== 'string') throw new DiagramSyntaxError('源码必须是文本。', 1)
+  if (source.length > 200_000) throw new DiagramSyntaxError('源码不能超过 200,000 个字符。', 1)
   // Sequence message text may contain punctuation/brackets, so only flowcharts use bracket-aware splitting.
   const normalized = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
   const first = normalized.split('\n').find(line => line.trim() && !/^\s*%%(?!\{)/.test(line))?.trim()
-  if (!first) throw new MermaidSyntaxError('请输入图表源码，或从模板库选择一种图表。', 1)
+  if (!first) throw new DiagramSyntaxError('请输入图表源码，或从模板库选择一种图表。', 1)
   const extended = compileStructureDiagram(normalized) ?? compileChartDiagram(normalized) ?? compilePlanningDiagram(normalized)
   if (extended) return extended
   if (first === 'sequenceDiagram' || /^sequenceDiagram\s*%%(?!\{)/.test(first)) {
     const lines: Statement[] = []
     normalized.split('\n').forEach((line, index) => {
-      if (/^\s*%%\{/.test(line)) throw new MermaidSyntaxError('暂不支持 Mermaid 初始化指令。', index + 1)
+      if (/^\s*%%\{/.test(line)) throw new DiagramSyntaxError('暂不支持图表初始化指令。', index + 1)
       if (line.trim() && !/^\s*%%/.test(line)) lines.push({ text: line.trim(), line: index + 1 })
     })
     return compileSequence(lines.slice(1))
   }
   const parts = statements(normalized), header = parts.shift()
-  if (!header) throw new MermaidSyntaxError('请添加图表类型。', 1)
+  if (!header) throw new DiagramSyntaxError('请添加图表类型。', 1)
   const flow = header.text.match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)$/)
   if (!flow) fail('不支持此图表声明，请从图表模板库选择支持的类型。', header)
   return compileFlow(parts, flow![1] === 'TD' ? 'TB' : flow![1] as 'TB' | 'LR' | 'RL' | 'BT')

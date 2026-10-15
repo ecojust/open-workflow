@@ -113,14 +113,14 @@ async function captureDocumentation() {
         await page.getByTestId('canvas-stage').press('Escape')
         await page.getByRole('button', { name: '关闭属性面板', exact: true }).click()
       }
-      if (kind === 'mermaid') await page.getByTestId('create-mermaid').click()
+      if (kind === 'mermaid') await page.getByTestId('create-diagram').click()
       if (kind !== 'home') await expect(page.locator('.save-status')).toContainText('草稿已保存')
       if (kind === 'mermaid') {
-        await expect(page.getByTestId('mermaid-preview').locator('svg')).toBeVisible()
+        await expect(page.getByTestId('diagram-preview').locator('svg')).toBeVisible()
         await page.getByRole('button', { name: '缩小预览', exact: true }).click()
       }
       await page.evaluate(() => document.fonts.ready)
-      await page.screenshot({ path: path.join(folder, `${kind}.png`), fullPage: true, animations: 'disabled' })
+      await page.screenshot({ path: path.join(folder, `${kind === 'mermaid' ? 'diagram' : kind}.png`), fullPage: true, animations: 'disabled' })
       if (kind === 'flow') {
         await page.getByTestId('global-style-toggle').click()
         await expect(page.getByRole('region', { name: '全局线条风格', exact: true })).toBeVisible()
@@ -136,8 +136,12 @@ async function captureDocumentation() {
         await page.screenshot({ path: path.join(folder, 'whiteboard-templates.png'), fullPage: true, animations: 'disabled' })
       }
       if (kind === 'mermaid') {
-        await page.getByTestId('mermaid-template-toggle').click()
-        await expect(page.getByTestId('mermaid-template-library')).toBeVisible()
+        await page.getByTestId('diagram-style-toggle').click()
+        await expect(page.getByTestId('diagram-style-panel')).toBeVisible()
+        await page.screenshot({ path: path.join(folder, 'diagram-styles.png'), fullPage: true, animations: 'disabled' })
+        await page.getByTestId('diagram-style-panel').getByRole('button', { name: '完成', exact: true }).click()
+        await page.getByTestId('diagram-template-toggle').click()
+        await expect(page.getByTestId('diagram-template-library')).toBeVisible()
         await page.screenshot({ path: path.join(folder, 'diagram-library.png'), fullPage: true, animations: 'disabled' })
       }
     } finally { await context.close() }
@@ -224,7 +228,7 @@ async function main() {
     assert.equal(saved.scene.elements[0].x, 80)
     assert.equal(saved.scene.elements[0].style.fill, '#dbeafe')
   })
-  await test('drawio-real-import', async page => {
+  await test('graph-xml-real-import', async page => {
     await openFixture(page, 'basic.drawio')
     const saved = await saveDocument(page)
     assert.equal(saved.kind, 'flow')
@@ -239,7 +243,7 @@ async function main() {
     assert.ok(nodes.some(node => node.id === edges[0].to.nodeId))
     assert.ok(saved.importSource.text.includes('mxGraphModel'), 'Original imported source must survive native conversion')
   })
-  await test('excalidraw-real-import', async page => {
+  await test('board-json-real-import', async page => {
     await openFixture(page, 'basic.excalidraw')
     const saved = await saveDocument(page)
     assert.equal(saved.kind, 'board')
@@ -247,10 +251,10 @@ async function main() {
     assert.ok(saved.scene.elements.some(element => element.type === 'stroke' && element.points.length >= 5))
     assert.ok(saved.importSource.text.includes('freedraw'))
   })
-  await test('mermaid-source-and-errors', async page => {
-    await page.getByTestId('create-mermaid').click()
-    const source = page.getByTestId('mermaid-source')
-    const preview = page.getByTestId('mermaid-preview')
+  await test('diagram-source-and-errors', async page => {
+    await page.getByTestId('create-diagram').click()
+    const source = page.getByTestId('diagram-source')
+    const preview = page.getByTestId('diagram-preview')
     await source.fill('flowchart LR\n  A[测试开始] --> B{审核}\n  B -->|通过| C[测试完成]')
     await expect(preview.locator('svg')).toBeVisible()
     await expect(preview).toContainText('测试开始')
@@ -260,11 +264,11 @@ async function main() {
     assert.ok(valid.source.includes('A[测试开始]'))
     const broken = 'flowchart LR\n  this is unsupported ???'
     await source.fill(broken)
-    await expect(page.getByTestId('mermaid-error')).toBeVisible()
-    await expect(page.getByTestId('mermaid-error')).toContainText(/2/)
+    await expect(page.getByTestId('diagram-error')).toBeVisible()
+    await expect(page.getByTestId('diagram-error')).toContainText(/2/)
     await expect(source).toHaveValue(broken)
     await source.fill('sequenceDiagram\n  participant A as 用户\n  participant B as 服务\n  A->>B: 提交请求\n  B-->>A: 返回结果')
-    await expect(page.getByTestId('mermaid-error')).toHaveCount(0)
+    await expect(page.getByTestId('diagram-error')).toHaveCount(0)
     await expect(preview).toContainText('提交请求')
     await expect(preview).toContainText('返回结果')
     await page.getByRole('button', { name: '转为可编辑流程图', exact: true }).click()
@@ -273,10 +277,10 @@ async function main() {
     assert.equal(copy.kind, 'flow')
     assert.ok(copy.scene.elements.length >= 4)
   })
-  await test('mobile-home-and-mermaid', async page => {
+  await test('mobile-home-and-diagram', async page => {
     await assertFitsViewport(page)
-    await page.getByTestId('create-mermaid').click()
-    await expect(page.getByTestId('mermaid-source')).toBeVisible()
+    await page.getByTestId('create-diagram').click()
+    await expect(page.getByTestId('diagram-source')).toBeVisible()
     await assertFitsViewport(page)
   }, { width: 320, height: 740 })
   await test('mobile-flow-canvas', async page => {
@@ -300,9 +304,9 @@ async function main() {
     assert.ok(saved.scene.elements.some(element => element.text === '窄屏便签'))
   }, { width: 320, height: 740 })
   await test('save-flushes-current-text-and-rename', async page => {
-    await page.getByTestId('create-mermaid').click()
+    await page.getByTestId('create-diagram').click()
     const sourceText = 'flowchart LR\n  A[尚未防抖的文本] --> B[立即保存]'
-    await page.getByTestId('mermaid-source').fill(sourceText)
+    await page.getByTestId('diagram-source').fill(sourceText)
     const codeDownload = await downloadText(page, () => page.keyboard.press('Control+s'))
     assert.equal(JSON.parse(codeDownload.text).source, sourceText)
     await page.getByRole('button', { name: '重命名当前文档', exact: true }).click()

@@ -57,12 +57,13 @@ test('legacy saved keys migrate only for unchanged content; dirty and unrecogniz
 test('new appearance and grouping changes cannot be marked clean by a matching legacy key', async () => {
   const previous = globalThis.indexedDB
   const cases = []
-  for (const mode of ['roughness', 'pattern', 'default-style', 'group', 'normalized-clean', 'current-clean']) {
+  for (const mode of ['roughness', 'pattern', 'default-style', 'group', 'diagram-style', 'normalized-clean', 'current-clean']) {
     const doc = parseDocument(JSON.stringify(legacyDocument())); doc.id = mode
     if (mode === 'roughness') doc.scene.elements[0].style.roughness = 'sketch'
     if (mode === 'pattern') doc.scene.elements[0].style.strokePattern = 'dotted'
     if (mode === 'default-style') doc.scene.defaultStyle = { ...DEFAULT_STYLE, strokeWidth: 8 }
     if (mode === 'group') doc.scene.elements[0].groupId = 'new-group'
+    if (mode === 'diagram-style') doc.diagramStyle = 'midnight'
     cases.push({ id: mode, document: doc, savedKey: mode === 'current-clean' ? contentKey(doc) : savedLegacyKey(), lastOpened: 0 })
   }
   let db

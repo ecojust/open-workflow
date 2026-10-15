@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DOMParser } from '@xmldom/xmldom'
 import { compilePlanningDiagram, PLANNING_TEMPLATES } from '../src/core/diagrams/planning.ts'
-import { MermaidSyntaxError } from '../src/core/diagrams/common.ts'
+import { DiagramSyntaxError } from '../src/core/diagrams/common.ts'
 import { sceneToSvg } from '../src/core/svg.ts'
 
 const shapes = result => result.scene.elements.filter(element => element.type === 'shape')
@@ -15,7 +15,7 @@ const compile = source => {
   return result
 }
 const syntaxError = (source, line) => assert.throws(() => compilePlanningDiagram(source), error => {
-  assert.ok(error instanceof MermaidSyntaxError, error?.stack)
+  assert.ok(error instanceof DiagramSyntaxError, error?.stack)
   assert.ok(error.line > 0)
   if (line !== undefined) assert.equal(error.line, line)
   return true
