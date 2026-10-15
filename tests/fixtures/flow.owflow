@@ -1,0 +1,8 @@
+{
+  "format": "open-workflow", "version": 1, "id": "fixture-document",
+  "title": "原生往返测试", "kind": "flow", "source": "",
+  "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z",
+  "scene": {"background": "#ffffff", "grid": true, "elements": [
+    {"id":"fixture-node","type":"shape","shape":"rectangle","x":80,"y":60,"width":180,"height":80,"text":"保留节点内容","locked":false,"style":{"stroke":"#334155","fill":"#dbeafe","strokeWidth":2,"fontSize":16,"textAlign":"center","opacity":1,"dashed":false}}
+  ]}
+}

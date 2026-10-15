@@ -1,0 +1,248 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { clone, DEFAULT_STYLE, newId, type EdgeElement, type ElementStyle, type Point, type Scene, type SceneElement, type ShapeElement } from '../core/types'
+import { center, combineBounds, edgePoints, elementBounds, pointInside, sceneBounds, snap, type Bounds } from '../core/geometry'
+import { elementToSvg, safeImageData } from '../core/svg'
+import { layoutScene } from '../core/layout'
+import { validateScene } from '../core/documents'
+
+const props = defineProps<{ scene: Scene; mode: 'flow' | 'board'; theme: 'light' | 'dark' }>()
+const emit = defineEmits<{ change: [scene: Scene, label: string]; status: [message: string] }>()
+type Tool = 'select' | 'hand' | 'rectangle' | 'ellipse' | 'diamond' | 'note' | 'text' | 'pen' | 'edge'
+const draft = ref<Scene>(clone(props.scene)), selected = ref<string[]>([]), tool = ref<Tool>('select')
+const stage = ref<HTMLDivElement>(), editor = ref<HTMLElement>(), imageInput = ref<HTMLInputElement>(), textInput = ref<HTMLTextAreaElement>(), propertyTextInput = ref<HTMLTextAreaElement>()
+const viewport = ref({ x: 0, y: 0, zoom: 1, width: 900, height: 600 }), spaceHeld = ref(false), editingId = ref<string>(), editText = ref('')
+const propertiesOpen = ref(typeof window === 'undefined' || window.innerWidth > 1000), activeStyle = ref<ElementStyle>({ ...DEFAULT_STYLE }), snapEnabled = ref(false)
+let observer: ResizeObserver | undefined, clipboard: SceneElement[] = [], initialFit = false, activePointerId: number | undefined, penPointBudget = 0
+let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'resize' | 'marquee'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
+const marquee = ref<Bounds>()
+watch(() => props.scene, value => { if (!gesture && !editingId.value) { draft.value = clone(value); selected.value = selected.value.filter(id => value.elements.some(e => e.id === id)) } }, { deep: true })
+const selectedElements = computed(() => draft.value.elements.filter(e => selected.value.includes(e.id)))
+const primary = computed(() => selectedElements.value.length === 1 ? selectedElements.value[0] : undefined)
+const selectedBounds = computed(() => selectedElements.value.length ? combineBounds(selectedElements.value.map(e => e.type === 'edge' ? elementBounds({ ...e, type: 'stroke', points: edgePoints(e, draft.value) }) : elementBounds(e))) : undefined)
+const editingNode = computed(() => draft.value.elements.find((e): e is ShapeElement => e.id === editingId.value && e.type === 'shape'))
+const editPosition = computed(() => { const node = editingNode.value; if (!node) return {}; const v = viewport.value; return { left: `${(node.x - v.x) * v.zoom}px`, top: `${(node.y - v.y) * v.zoom}px`, width: `${node.width * v.zoom}px`, height: `${node.height * v.zoom}px`, fontSize: `${node.style.fontSize * v.zoom}px`, color: ['transparent', 'none'].includes(node.style.stroke.toLowerCase()) ? '#334155' : node.style.stroke, textAlign: node.style.textAlign } })
+const viewBox = computed(() => `${viewport.value.x} ${viewport.value.y} ${viewport.value.width / viewport.value.zoom} ${viewport.value.height / viewport.value.zoom}`)
+const zoomLabel = computed(() => `${Math.round(viewport.value.zoom * 100)}%`)
+const tools: { id: Tool; label: string; icon: string; shortcut?: string }[] = [
+  { id: 'select', label: '选择', icon: '↖', shortcut: 'V' }, { id: 'hand', label: '移动画布', icon: '✋', shortcut: 'H' },
+  { id: 'rectangle', label: '矩形', icon: '▭', shortcut: 'R' }, { id: 'ellipse', label: '圆形', icon: '○', shortcut: 'O' },
+  { id: 'diamond', label: '判断', icon: '◇', shortcut: 'D' }, { id: 'edge', label: '连线', icon: '↗', shortcut: 'L' },
+  { id: 'text', label: '文字', icon: 'T', shortcut: 'T' }, { id: 'note', label: '便签', icon: '▤', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: '〰', shortcut: 'P' },
+]
+const shapePalette: { shape: ShapeElement['shape']; text: string; icon: string }[] = [
+  { shape: 'rectangle', text: '处理步骤', icon: '▭' }, { shape: 'ellipse', text: '开始 / 结束', icon: '⬭' }, { shape: 'diamond', text: '条件判断', icon: '◇' }, { shape: 'note', text: '便签', icon: '▤' }, { shape: 'text', text: '文本', icon: 'T' },
+]
+function commit(label: string): boolean {
+  try {
+    const candidate = validateScene(draft.value)
+    draft.value = candidate
+    emit('change', clone(candidate), label)
+    // Parent may reject an otherwise valid scene because the whole document is too large.
+    nextTick(() => { if (!gesture) { draft.value = clone(props.scene); selected.value = selected.value.filter(id => draft.value.elements.some(e => e.id === id)); if (editingId.value && !draft.value.elements.some(e => e.id === editingId.value)) editingId.value = undefined } })
+    return true
+  } catch (error) { draft.value = clone(props.scene); selected.value = selected.value.filter(id => draft.value.elements.some(e => e.id === id)); emit('status', error instanceof Error ? error.message : '本次编辑超出画布限制，已恢复原内容'); return false }
+}
+function canAdd(elements = 1, points = 0): boolean {
+  if (draft.value.elements.length + elements > 5000) { emit('status', '画布最多支持 5000 个元素，请删除部分元素或新建文档'); return false }
+  const currentPoints = draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0)
+  if (currentPoints + points > 100000) { emit('status', '画布笔迹总点数最多为 100000，请删除部分笔迹或新建文档'); return false }
+  return true
+}
+function releaseCapture() { if (activePointerId !== undefined && stage.value?.hasPointerCapture(activePointerId)) stage.value.releasePointerCapture(activePointerId); activePointerId = undefined }
+function localPoint(event: PointerEvent | WheelEvent): Point { const rect = stage.value!.getBoundingClientRect(), v = viewport.value; return { x: v.x + (event.clientX - rect.left) / v.zoom, y: v.y + (event.clientY - rect.top) / v.zoom } }
+function snapped(point: Point): Point { return { x: snap(point.x, snapEnabled.value), y: snap(point.y, snapEnabled.value) } }
+function focusStage() { nextTick(() => stage.value?.focus({ preventScroll: true })) }
+function setTool(value: Tool) { flush(); tool.value = value; focusStage() }
+function makeShape(shape: ShapeElement['shape'], point: Point): ShapeElement {
+  const style = { ...activeStyle.value }
+  if (shape === 'note') { style.fill = '#fff4ad'; style.stroke = '#665819'; style.strokeWidth = 0; style.textAlign = 'left' }
+  if (shape === 'text') style.fill = 'transparent'
+  return { id: newId(), type: 'shape', shape, x: point.x, y: point.y, width: shape === 'diamond' ? 160 : 180, height: shape === 'note' ? 150 : shape === 'text' ? 54 : 86, text: shape === 'text' ? '输入文字' : shape === 'note' ? '写下你的想法' : '', style, locked: false }
+}
+function addShape(shape: ShapeElement['shape']) { flush(); if (!canAdd()) return; const v = viewport.value, node = makeShape(shape, snapped({ x: v.x + v.width / v.zoom / 2 - 90, y: v.y + v.height / v.zoom / 2 - 43 })); while (draft.value.elements.some(e => e.type === 'shape' && Math.abs(e.x - node.x) < 12 && Math.abs(e.y - node.y) < 12)) { node.x += 24; node.y += 24 }; draft.value.elements.push(node); selected.value = [node.id]; commit('添加图形'); focusStage() }
+function findNode(point: Point): ShapeElement | undefined { return [...draft.value.elements].reverse().find((e): e is ShapeElement => e.type === 'shape' && pointInside(point, e)) }
+function startEdit(node: SceneElement | undefined) { if (!node || node.type !== 'shape' || node.locked || node.shape === 'image') return; flush(); editingId.value = node.id; editText.value = node.text; nextTick(() => { textInput.value?.focus(); textInput.value?.select() }) }
+function flush() {
+  finishGesture(false)
+  if (propertyTextInput.value && document.activeElement === propertyTextInput.value) {
+    const e = primary.value, text = propertyTextInput.value.value
+    if (e && ((e.type === 'shape' && e.text !== text) || (e.type === 'edge' && e.label !== text))) updateText(text)
+  }
+  const control = document.activeElement
+  if ((control instanceof HTMLInputElement || control instanceof HTMLSelectElement) && editor.value?.contains(control) && control.closest('.properties-panel')) control.dispatchEvent(new Event('change', { bubbles: true }))
+  if (!editingId.value) return
+  const node = editingNode.value; editingId.value = undefined
+  if (node && node.text !== editText.value) { node.text = editText.value.slice(0, 100000); commit('修改文字') }
+}
+defineExpose({ flush, fitCanvas })
+function pointerDown(event: PointerEvent, element?: SceneElement, resize = false) {
+  if (event.button !== 0 && event.button !== 1) return
+  if (event.target instanceof Element && event.target.closest('.inline-text-editor')) return
+  flush(); event.preventDefault(); event.stopPropagation(); stage.value?.focus({ preventScroll: true })
+  stage.value?.setPointerCapture(event.pointerId)
+  activePointerId = event.pointerId
+  const point = localPoint(event), original = clone(draft.value)
+  if (spaceHeld.value || event.button === 1 || tool.value === 'hand') { gesture = { type: 'pan', start: { x: event.clientX, y: event.clientY }, last: point, original, originalView: { x: viewport.value.x, y: viewport.value.y } }; return }
+  if (resize && element?.type === 'shape' && !element.locked) { gesture = { type: 'resize', start: point, last: point, original, id: element.id }; return }
+  if (!['select', 'hand'].includes(tool.value) && !canAdd(1, tool.value === 'pen' ? 1 : 0)) { releaseCapture(); return }
+  if (tool.value === 'edge') {
+    const node = element?.type === 'shape' ? element : findNode(point), from = node ? { ...center(node), nodeId: node.id } : snapped(point)
+    const edge: EdgeElement = { id: newId(), type: 'edge', from, to: { ...point }, label: '', arrow: 'end', route: props.mode === 'flow' ? 'orthogonal' : 'straight', style: { ...activeStyle.value, fill: 'none' }, locked: false }
+    draft.value.elements.push(edge); selected.value = [edge.id]; gesture = { type: 'edge', start: point, last: point, original, id: edge.id }; return
+  }
+  if (tool.value === 'pen') { const id = newId(); penPointBudget = 100000 - draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0) - 1; draft.value.elements.push({ id, type: 'stroke', points: [point], style: { ...activeStyle.value, fill: 'none' }, locked: false }); selected.value = [id]; gesture = { type: 'pen', start: point, last: point, original, id }; return }
+  if (!['select', 'hand'].includes(tool.value)) {
+    const node = makeShape(tool.value as ShapeElement['shape'], snapped(point)); draft.value.elements.push(node); selected.value = [node.id]; gesture = { type: 'draw', start: snapped(point), last: point, original, id: node.id }; return
+  }
+  if (element) {
+    if (event.shiftKey) { selected.value = selected.value.includes(element.id) ? selected.value.filter(id => id !== element.id) : [...selected.value, element.id] }
+    else if (!selected.value.includes(element.id)) selected.value = [element.id]
+    if (!element.locked && selected.value.includes(element.id)) gesture = { type: 'move', start: point, last: point, original }
+  } else { if (!event.shiftKey) selected.value = []; gesture = { type: 'marquee', start: point, last: point, original, additive: event.shiftKey }; marquee.value = { x: point.x, y: point.y, width: 0, height: 0 } }
+}
+function translateElement(element: SceneElement, dx: number, dy: number) {
+  if (element.type === 'shape') { element.x += dx; element.y += dy }
+  else if (element.type === 'stroke') element.points = element.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
+  else { if (!element.from.nodeId) { element.from.x += dx; element.from.y += dy }; if (!element.to.nodeId) { element.to.x += dx; element.to.y += dy } }
+}
+function pointerMove(event: PointerEvent) {
+  if (!gesture) return
+  const point = localPoint(event), dx = point.x - gesture.start.x, dy = point.y - gesture.start.y
+  if (Math.hypot(dx, dy) * viewport.value.zoom > 3) gesture.moved = true
+  if (gesture.type === 'pan') { viewport.value.x = gesture.originalView!.x - (event.clientX - gesture.start.x) / viewport.value.zoom; viewport.value.y = gesture.originalView!.y - (event.clientY - gesture.start.y) / viewport.value.zoom; return }
+  if (gesture.type === 'move') {
+    const anchor = gesture.original.elements.find(e => selected.value.includes(e.id) && !e.locked)
+    const origin = anchor ? elementBounds(anchor) : { x: 0, y: 0 }
+    const x = snap(origin.x + dx, snapEnabled.value) - origin.x, y = snap(origin.y + dy, snapEnabled.value) - origin.y
+    draft.value.elements = gesture.original.elements.map(original => { const e = clone(original); if (selected.value.includes(e.id) && !e.locked) translateElement(e, x, y); return e })
+  } else if (gesture.type === 'draw' || gesture.type === 'resize') {
+    const node = draft.value.elements.find((e): e is ShapeElement => e.id === gesture!.id && e.type === 'shape')!
+    const p = snapped(point)
+    if (gesture.type === 'draw' && gesture.moved) { node.x = Math.min(gesture.start.x, p.x); node.y = Math.min(gesture.start.y, p.y); node.width = Math.max(24, Math.abs(p.x - gesture.start.x)); node.height = Math.max(24, Math.abs(p.y - gesture.start.y)) }
+    if (gesture.type === 'resize') { node.width = Math.max(24, p.x - node.x); node.height = Math.max(24, p.y - node.y); if (event.shiftKey) { const old = gesture.original.elements.find(e => e.id === node.id) as ShapeElement; node.height = node.width * old.height / old.width } }
+  } else if (gesture.type === 'pen') { const stroke = draft.value.elements.find(e => e.id === gesture!.id); if (stroke?.type === 'stroke' && Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y) * viewport.value.zoom > 1.5) { if (!penPointBudget) { finishGesture(false); emit('status', '已达到 100000 个笔迹点，本次笔迹已保存'); return }; stroke.points.push(point); penPointBudget--; gesture.last = point } }
+  else if (gesture.type === 'edge') { const edge = draft.value.elements.find(e => e.id === gesture!.id) as EdgeElement, target = findNode(point); edge.to = target ? { ...center(target), nodeId: target.id } : snapped(point) }
+  else if (gesture.type === 'marquee') marquee.value = { x: Math.min(point.x, gesture.start.x), y: Math.min(point.y, gesture.start.y), width: Math.abs(dx), height: Math.abs(dy) }
+}
+function pointerUp() { finishGesture(true) }
+function finishGesture(openText: boolean) {
+  if (!gesture) { releaseCapture(); return }
+  const done = gesture; gesture = undefined
+  releaseCapture()
+  if (done.type === 'marquee') {
+    const box = marquee.value!; const ids = draft.value.elements.filter(e => { const b = e.type === 'edge' ? elementBounds({ ...e, type: 'stroke', points: edgePoints(e, draft.value) }) : elementBounds(e); return b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height }).map(e => e.id)
+    selected.value = [...new Set([...(done.additive ? selected.value : []), ...ids])]; marquee.value = undefined; return
+  }
+  if (done.type === 'pan') return
+  if (done.type === 'edge' && !done.moved) { draft.value = done.original; selected.value = []; return }
+  if (JSON.stringify(done.original) !== JSON.stringify(draft.value)) commit(({ move: '移动图形', resize: '调整大小', draw: '添加图形', pen: '自由绘制', edge: '添加连线' } as Record<string, string>)[done.type] || '编辑画布')
+  if (done.type === 'draw') { const added = draft.value.elements.find(e => e.id === done.id); tool.value = 'select'; if (openText && added?.type === 'shape' && ['text', 'note'].includes(added.shape)) startEdit(added) }
+}
+function cancelGesture() { if (gesture) draft.value = gesture.original; gesture = undefined; marquee.value = undefined; releaseCapture() }
+function fitCanvas() {
+  if (!stage.value) return
+  if (!draft.value.elements.length) { viewport.value.zoom = 1; viewport.value.x = 0; viewport.value.y = 0; return }
+  const b = sceneBounds(draft.value), v = viewport.value, zoom = Math.max(0.1, Math.min(1.5, (v.width - 100) / Math.max(200, b.width), (v.height - 100) / Math.max(180, b.height)))
+  v.zoom = zoom; v.x = b.x + b.width / 2 - v.width / zoom / 2; v.y = b.y + b.height / 2 - v.height / zoom / 2
+}
+function zoomTo(next: number, anchor?: Point) { const v = viewport.value, point = anchor || { x: v.x + v.width / v.zoom / 2, y: v.y + v.height / v.zoom / 2 }, ratio = v.zoom / Math.max(0.1, Math.min(4, next)); v.x = point.x - (point.x - v.x) * ratio; v.y = point.y - (point.y - v.y) * ratio; v.zoom = Math.max(0.1, Math.min(4, next)) }
+function wheel(event: WheelEvent) { if (event.ctrlKey || event.metaKey) zoomTo(viewport.value.zoom * Math.exp(-event.deltaY * 0.002), localPoint(event)); else { viewport.value.x += event.deltaX / viewport.value.zoom; viewport.value.y += event.deltaY / viewport.value.zoom } }
+function deleteSelected() { flush(); const removable = new Set(selectedElements.value.filter(e => !e.locked).map(e => e.id)); if (!removable.size) return; draft.value.elements = draft.value.elements.filter(e => !removable.has(e.id) && !(e.type === 'edge' && ((e.from.nodeId && removable.has(e.from.nodeId)) || (e.to.nodeId && removable.has(e.to.nodeId))))); selected.value = []; commit('删除图形') }
+function copySelected() {
+  flush(); clipboard = clone(selectedElements.value)
+  for (const e of clipboard) if (e.type === 'edge') { const points = edgePoints(e, draft.value); e.from = { ...e.from, ...points[0] }; e.to = { ...e.to, ...points[points.length - 1] } }
+  if (clipboard.length) emit('status', `已复制 ${clipboard.length} 个元素`)
+}
+function pasteSelected() {
+  if (!clipboard.length) return
+  flush(); if (!canAdd(clipboard.length, clipboard.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0))) return
+  const ids = new Map(clipboard.map(e => [e.id, newId()])), shapeIds = new Set(draft.value.elements.filter(e => e.type === 'shape').map(e => e.id)), elements = clone(clipboard)
+  for (const e of elements) {
+    e.id = ids.get(e.id)!; e.locked = false
+    if (e.type === 'edge') for (const endpoint of [e.from, e.to]) if (endpoint.nodeId) { if (ids.has(endpoint.nodeId)) endpoint.nodeId = ids.get(endpoint.nodeId); else if (!shapeIds.has(endpoint.nodeId)) delete endpoint.nodeId }
+    translateElement(e, 24, 24)
+  }
+  draft.value.elements.push(...elements); selected.value = elements.map(e => e.id)
+  if (commit('粘贴图形')) clipboard = clone(elements)
+  focusStage()
+}
+function duplicateSelected() { copySelected(); pasteSelected() }
+function updateStyle(key: keyof ElementStyle, value: string | number | boolean) {
+  if (key === 'strokeWidth' || key === 'fontSize' || key === 'opacity') { const number = typeof value === 'string' && !value.trim() ? NaN : Number(value); value = Number.isFinite(number) ? Math.max(key === 'fontSize' ? 1 : 0, Math.min(key === 'fontSize' ? 500 : key === 'strokeWidth' ? 100 : 1, number)) : (primary.value?.style[key] ?? activeStyle.value[key]) }
+  activeStyle.value = { ...activeStyle.value, [key]: value }; for (const e of selectedElements.value) if (!e.locked) e.style = { ...e.style, [key]: value }; if (selectedElements.value.some(e => !e.locked)) commit('修改样式')
+}
+function updateText(value: string) { const e = primary.value; if (!e || e.locked) return; if (e.type === 'shape') e.text = value.slice(0, 100000); else if (e.type === 'edge') e.label = value.slice(0, 100000); commit('修改文字') }
+function updateEdge(key: 'route' | 'arrow', value: string) { const e = primary.value; if (e?.type === 'edge' && !e.locked) { if (key === 'route') e.route = value as EdgeElement['route']; else e.arrow = value as EdgeElement['arrow']; commit('修改连线') } }
+function reorder(front: boolean) { const moving = selectedElements.value.filter(e => !e.locked); if (!moving.length) return; const ids = new Set(moving.map(e => e.id)), others = draft.value.elements.filter(e => !ids.has(e.id)); draft.value.elements = front ? [...others, ...moving] : [...moving, ...others]; commit(front ? '移到顶层' : '移到底层') }
+function toggleLock() { const lock = !selectedElements.value.every(e => e.locked); for (const e of selectedElements.value) e.locked = lock; commit(lock ? '锁定图形' : '解锁图形') }
+function toggleGrid() { draft.value.grid = !draft.value.grid; commit('切换网格') }
+function autoLayout() { flush(); draft.value = layoutScene(draft.value); commit('自动布局'); nextTick(fitCanvas) }
+async function importImage(event: Event) {
+  const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''; if (!file) return; flush(); if (!canAdd()) return
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { emit('status', '请选择 10 MB 以内的 PNG、JPEG 或 WebP 图片'); return }
+  try { const data = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file) }); if (!safeImageData(data)) throw Error('格式无效'); const image = new Image(); await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = reject; image.src = data }); const v = viewport.value, width = Math.min(420, image.naturalWidth), height = width * image.naturalHeight / image.naturalWidth, node = makeShape('image', { x: v.x + v.width / v.zoom / 2 - width / 2, y: v.y + v.height / v.zoom / 2 - height / 2 }); node.width = width; node.height = height; node.imageData = data; node.text = file.name; draft.value.elements.push(node); selected.value = [node.id]; commit('添加图片') } catch { emit('status', '图片无法读取，请选择有效的本地图片文件') }
+}
+function keyDown(event: KeyboardEvent) {
+  if (event.target instanceof HTMLElement && (event.target.closest('input,textarea,select,button,a') || event.target.isContentEditable)) return
+  const command = event.ctrlKey || event.metaKey
+  if (command && ['z', 'y', 's'].includes(event.key.toLowerCase())) return
+  if (event.code === 'Space') { event.preventDefault(); spaceHeld.value = true; return }
+  if (event.key === 'Escape') { cancelGesture(); selected.value = []; tool.value = 'select'; return }
+  if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return }
+  if (command && event.key.toLowerCase() === 'a') { event.preventDefault(); selected.value = draft.value.elements.map(e => e.id); return }
+  if (command && event.key.toLowerCase() === 'c') { event.preventDefault(); copySelected(); return }
+  if (command && event.key.toLowerCase() === 'v') { event.preventDefault(); pasteSelected(); return }
+  if (command && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); return }
+  if (command) return
+  if (event.key.startsWith('Arrow') && selected.value.length) { event.preventDefault(); const delta = event.shiftKey ? 10 : 1, dx = event.key === 'ArrowLeft' ? -delta : event.key === 'ArrowRight' ? delta : 0, dy = event.key === 'ArrowUp' ? -delta : event.key === 'ArrowDown' ? delta : 0; for (const e of selectedElements.value) if (!e.locked) translateElement(e, dx, dy); commit('移动图形'); return }
+  if (event.key === 'Enter') { event.preventDefault(); startEdit(primary.value); return }
+  const shortcut = tools.find(t => t.shortcut?.toLowerCase() === event.key.toLowerCase()); if (shortcut) { event.preventDefault(); setTool(shortcut.id) }
+  if (event.key === '0') fitCanvas()
+}
+function releaseSpace(event: KeyboardEvent) { if (event.code === 'Space') spaceHeld.value = false }
+function windowBlur() { spaceHeld.value = false; finishGesture(false) }
+onMounted(() => { observer = new ResizeObserver(entries => { const rect = entries[0]?.contentRect; if (!rect) return; viewport.value.width = rect.width; viewport.value.height = rect.height; if (!initialFit && rect.width && rect.height) { initialFit = true; fitCanvas() } }); if (stage.value) observer.observe(stage.value); window.addEventListener('keyup', releaseSpace); window.addEventListener('blur', windowBlur); focusStage() })
+onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeEventListener('keyup', releaseSpace); window.removeEventListener('blur', windowBlur) })
+</script>
+
+<template>
+  <section ref="editor" class="scene-editor" :class="{ 'board-mode': mode === 'board' }" @keydown="keyDown" data-testid="scene-editor">
+    <div class="canvas-commandbar">
+      <div class="toolset" role="toolbar" aria-label="画布工具">
+        <button v-for="item in tools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><span>{{ item.icon }}</span></button>
+        <span class="tool-divider" />
+        <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()">▧</button>
+      </div>
+      <div class="commandbar-actions"><button v-if="mode === 'flow'" class="text-button" @click="autoLayout" title="自动排列流程图">自动布局</button><button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板">☷</button></div>
+      <input ref="imageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="importImage" />
+    </div>
+    <div class="canvas-workspace">
+      <aside v-if="mode === 'flow'" class="shape-library" aria-label="图形素材"><div class="panel-heading">图形素材 <span>⌘</span></div><div class="library-caption">通用图形</div><div class="shape-grid"><button v-for="item in shapePalette" :key="item.shape" @click="addShape(item.shape)" :aria-label="`添加${item.text}`"><span>{{ item.icon }}</span><small>{{ item.text }}</small></button></div><div class="library-hint">双击图形编辑文字<br />连线工具连接两个图形<br />按住空格移动画布</div></aside>
+      <div ref="stage" class="canvas-stage" :class="{ 'is-panning': spaceHeld || tool === 'hand', 'is-drawing': !['select', 'hand'].includes(tool) }" tabindex="0" role="application" aria-label="绘图画布" data-testid="canvas-stage" @pointerdown="pointerDown($event)" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="cancelGesture" @wheel.prevent="wheel" @dblclick.self="() => addShape('text')" @contextmenu.prevent>
+        <svg class="scene-svg" :viewBox="viewBox" width="100%" height="100%" aria-label="工作流画布" :style="{ background: draft.background }">
+          <defs><pattern id="workflow-dot-grid" patternUnits="userSpaceOnUse" width="20" height="20"><circle cx="0" cy="0" r=".85" :fill="theme === 'dark' ? '#52617b' : '#bbc4d2'" opacity=".5" /></pattern></defs>
+          <rect v-if="draft.grid" :x="viewport.x" :y="viewport.y" :width="viewport.width / viewport.zoom" :height="viewport.height / viewport.zoom" fill="url(#workflow-dot-grid)" />
+          <g v-for="element in draft.elements" :key="element.id" :data-element-id="element.id" :data-element-type="element.type" :class="{ 'canvas-element': true, 'element-locked': element.locked }" @pointerdown="pointerDown($event, element)" @dblclick.stop="startEdit(element)" v-html="elementToSvg(element, draft, true)" />
+          <g v-if="selectedBounds" class="selection-overlay" pointer-events="none"><rect :x="selectedBounds.x - 5 / viewport.zoom" :y="selectedBounds.y - 5 / viewport.zoom" :width="selectedBounds.width + 10 / viewport.zoom" :height="selectedBounds.height + 10 / viewport.zoom" fill="none" stroke="#7c6aee" :stroke-width="1.5 / viewport.zoom" :stroke-dasharray="selectedElements.length > 1 ? '6 4' : undefined" /><rect v-if="primary?.type === 'shape' && !primary.locked" :x="primary.x + primary.width - 5 / viewport.zoom" :y="primary.y + primary.height - 5 / viewport.zoom" :width="10 / viewport.zoom" :height="10 / viewport.zoom" fill="#ffffff" stroke="#7c6aee" :stroke-width="1.5 / viewport.zoom" pointer-events="all" class="resize-handle" data-testid="resize-handle" @pointerdown.stop="pointerDown($event, primary, true)" /></g>
+          <rect v-if="marquee" v-bind="marquee" fill="#7c6aee18" stroke="#7c6aee" :stroke-width="1 / viewport.zoom" pointer-events="none" />
+        </svg>
+        <textarea v-if="editingNode" ref="textInput" v-model="editText" maxlength="100000" class="inline-text-editor" :style="editPosition" aria-label="编辑图形文字" @blur="flush" @keydown.escape.stop="editingId = undefined" @keydown.enter.ctrl.prevent="flush" @keydown.enter.meta.prevent="flush" @pointerdown.stop />
+        <div v-if="!draft.elements.length" class="empty-canvas"><div class="empty-canvas-icon">{{ mode === 'flow' ? '◇' : '✎' }}</div><strong>{{ mode === 'flow' ? '让想法，顺着流程展开' : '留一块空白，给下一个好想法' }}</strong><span>从工具栏选择图形，或插入一张本地图片</span></div>
+        <div class="canvas-bottom" @pointerdown.stop><div class="canvas-hint">{{ selected.length ? `已选 ${selected.length} 个元素${selectedElements.some(e => e.locked) ? ' · 包含锁定元素' : ''}` : tool === 'edge' ? '从一个图形拖动到另一个图形以连接' : '空格拖动 · Ctrl / ⌘ + 滚轮缩放' }}</div><div class="zoom-controls"><button aria-label="缩小" @click.stop="zoomTo(viewport.zoom / 1.2)">−</button><button class="zoom-value" title="重置为 100%" @click.stop="zoomTo(1)">{{ zoomLabel }}</button><button aria-label="放大" @click.stop="zoomTo(viewport.zoom * 1.2)">+</button><span /><button aria-label="适应画布" title="适应画布 (0)" @click.stop="fitCanvas">⛶</button></div></div>
+      </div>
+      <aside v-if="propertiesOpen" class="properties-panel" aria-label="属性面板"><div class="panel-heading">{{ selected.length ? '图形属性' : '画布设置' }}<small v-if="selected.length">{{ selected.length }} 个</small></div>
+        <template v-if="selected.length"><div v-if="primary?.type === 'shape' || primary?.type === 'edge'" class="property-section"><label :for="`element-text-${primary.id}`">{{ primary.type === 'edge' ? '连线标签' : '文字内容' }}</label><textarea ref="propertyTextInput" :id="`element-text-${primary.id}`" :value="primary.type === 'shape' ? primary.text : primary.label" :disabled="primary.locked" @change="updateText(($event.target as HTMLTextAreaElement).value)" rows="3" maxlength="100000" data-testid="property-text" /></div>
+          <div class="property-section"><h3>外观</h3><div class="property-row"><label for="element-fill">填充</label><input id="element-fill" type="color" :value="primary?.style.fill?.startsWith('#') && primary.style.fill.length === 7 ? primary.style.fill : '#ffffff'" @change="updateStyle('fill', ($event.target as HTMLInputElement).value)" /><button class="mini-button" @click="updateStyle('fill', 'none')" title="无填充">无</button></div><div class="property-row"><label for="element-stroke">线条 / 文字</label><input id="element-stroke" type="color" :value="primary?.style.stroke?.startsWith('#') && primary.style.stroke.length === 7 ? primary.style.stroke : '#334155'" @change="updateStyle('stroke', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-width">线宽</label><input id="element-width" type="number" min="0" max="100" :value="primary?.style.strokeWidth ?? 2" @change="updateStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-font">字号</label><input id="element-font" type="number" min="1" max="500" :value="primary?.style.fontSize ?? 16" @change="updateStyle('fontSize', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-align">对齐</label><select id="element-align" :value="primary?.style.textAlign ?? 'center'" @change="updateStyle('textAlign', ($event.target as HTMLSelectElement).value)"><option value="left">居左</option><option value="center">居中</option><option value="right">居右</option></select></div><label class="check-row"><input type="checkbox" :checked="primary?.style.dashed" @change="updateStyle('dashed', ($event.target as HTMLInputElement).checked)" />虚线</label></div>
+          <div v-if="primary?.type === 'edge'" class="property-section"><h3>连接方式</h3><div class="property-row"><label for="edge-route">路径</label><select id="edge-route" :value="primary.route" @change="updateEdge('route', ($event.target as HTMLSelectElement).value)"><option value="orthogonal">直角连线</option><option value="straight">直线</option></select></div><div class="property-row"><label for="edge-arrow">箭头</label><select id="edge-arrow" :value="primary.arrow" @change="updateEdge('arrow', ($event.target as HTMLSelectElement).value)"><option value="end">单向</option><option value="both">双向</option><option value="none">无箭头</option></select></div></div>
+          <div class="property-section"><h3>排列与操作</h3><div class="property-buttons"><button @click="reorder(true)">移到顶层</button><button @click="reorder(false)">移到底层</button><button @click="duplicateSelected">复制一份</button><button @click="toggleLock">{{ selectedElements.every(e => e.locked) ? '解锁' : '锁定' }}</button></div><button class="delete-button" @click="deleteSelected">删除所选</button></div>
+        </template>
+        <div v-else class="property-section"><h3>显示</h3><label class="check-row"><input type="checkbox" :checked="draft.grid" @change="toggleGrid" />显示点阵网格</label><label class="check-row"><input type="checkbox" v-model="snapEnabled" />吸附到网格</label><div class="property-row"><label for="scene-background">背景颜色</label><input id="scene-background" type="color" :value="draft.background" @change="draft.background = ($event.target as HTMLInputElement).value; commit('修改背景')" /></div><p class="property-tip">选中图形调整样式、文字与连线。<br /><br />Shift + 点击：多选<br />方向键：微调位置<br />Delete：删除所选<br />Ctrl / ⌘ + D：复制</p></div>
+      </aside>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.scene-editor{height:100%;min-height:0;display:flex;flex-direction:column;background:var(--ui-bg,#f7f8fc);color:var(--ui-text,#273044);font-size:13px}.scene-editor button,.scene-editor input,.scene-editor textarea,.scene-editor select{font:inherit}.scene-editor button{cursor:pointer;color:inherit}.canvas-commandbar{height:58px;min-height:58px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--ui-line,#e8eaf1);background:var(--ui-surface,#fff);padding:0 16px;gap:12px}.toolset,.commandbar-actions{display:flex;gap:4px;align-items:center}.toolset button,.commandbar-actions button{width:35px;height:35px;border:1px solid transparent;border-radius:8px;background:transparent;font-size:22px;display:grid;place-items:center;line-height:1}.toolset button:hover,.commandbar-actions button:hover{background:var(--ui-bg,#f4f4fa)}.toolset button.active{color:var(--ui-accent,#7861e9);background:#8670ef14;border-color:#8d76ed30}.tool-divider{width:1px;height:24px;background:var(--ui-line,#e8eaf1);margin:0 6px}.commandbar-actions .text-button{width:auto;font-size:12px;padding:0 10px}.canvas-workspace{display:flex;flex:1;min-height:0;min-width:0}.shape-library{width:172px;flex:0 0 172px;border-right:1px solid var(--ui-line,#e8eaf1);background:var(--ui-surface,#fff);padding:20px 14px;overflow:auto}.panel-heading{font-size:12px;letter-spacing:.03em;font-weight:650;display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}.panel-heading>span,.panel-heading>small{color:var(--ui-muted,#8c96a7);font-size:12px;font-weight:400}.library-caption{font-size:11px;color:var(--ui-muted,#8c96a7);margin-bottom:12px}.shape-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.shape-grid button{height:79px;background:var(--ui-surface,#fff);border:1px solid var(--ui-line,#e8eaf1);border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}.shape-grid button:hover{border-color:var(--ui-accent,#7861e9);background:#8670ef07}.shape-grid button>span{font-size:27px;color:#7d879a;line-height:1}.shape-grid small{font-size:10px;color:var(--ui-muted,#8c96a7)}.library-hint{font-size:10px;line-height:2.1;color:var(--ui-muted,#8c96a7);margin-top:30px;padding-top:18px;border-top:1px solid var(--ui-line,#e8eaf1)}.canvas-stage{position:relative;flex:1;min-width:0;overflow:hidden;outline:none;touch-action:none;user-select:none}.canvas-stage:focus-visible{box-shadow:inset 0 0 0 2px #7c6aee55}.scene-svg{display:block;position:absolute;inset:0;overflow:hidden}.canvas-element{cursor:move}.canvas-element.element-locked{cursor:default}.is-panning,.is-panning .canvas-element{cursor:grab}.is-panning:active{cursor:grabbing}.is-drawing,.is-drawing .canvas-element{cursor:crosshair}.resize-handle{cursor:nwse-resize}.inline-text-editor{position:absolute;z-index:5;padding:10px;border:2px solid #7c6aee;background:#fffffff5;border-radius:5px;resize:none;outline:none;box-sizing:border-box;line-height:1.35;user-select:text}.empty-canvas{pointer-events:none;position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;white-space:nowrap;color:#8993a5}.empty-canvas-icon{width:62px;height:62px;display:grid;place-items:center;background:#8670ef0e;color:#a997e9;border:1px solid #8670ef16;border-radius:18px;font-size:36px;margin-bottom:8px}.empty-canvas strong{font-size:15px;font-weight:500;color:#727f93}.empty-canvas span{font-size:11px}.canvas-bottom{position:absolute;left:20px;right:20px;bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px;pointer-events:none}.canvas-hint{font-size:10px;color:#8993a5;padding:7px 9px;background:#ffffffd9;border:1px solid #e8eaf180;border-radius:6px;backdrop-filter:blur(8px)}.zoom-controls{display:flex;align-items:center;background:var(--ui-surface,#fff);border:1px solid var(--ui-line,#e8eaf1);border-radius:9px;padding:4px;box-shadow:0 3px 12px #26345b08;pointer-events:auto}.zoom-controls button{background:none;border:0;height:27px;width:28px;border-radius:5px;font-size:17px}.zoom-controls button:hover{background:var(--ui-bg,#f7f8fc)}.zoom-controls .zoom-value{width:48px;font-size:11px}.zoom-controls>span{height:17px;width:1px;background:var(--ui-line,#e8eaf1);margin:0 4px}.properties-panel{width:218px;flex:0 0 218px;box-sizing:border-box;padding:20px 17px;border-left:1px solid var(--ui-line,#e8eaf1);background:var(--ui-surface,#fff);overflow:auto}.property-section{padding:0 0 20px;margin-bottom:18px;border-bottom:1px solid var(--ui-line,#e8eaf1)}.property-section h3{font-size:11px;font-weight:500;color:var(--ui-muted,#8c96a7);margin:0 0 15px}.property-section>label:not(.check-row){display:block;font-size:11px;margin-bottom:9px;color:var(--ui-muted,#8c96a7)}.property-section textarea{box-sizing:border-box;resize:vertical;width:100%;border:1px solid var(--ui-line,#e8eaf1);border-radius:6px;background:var(--ui-bg,#fafafe);color:var(--ui-text,#273044);font-size:12px;padding:8px;line-height:1.6}.property-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:11px 0;font-size:11px}.property-row>label{flex:1;color:var(--ui-muted,#8c96a7)}.property-row input[type=color]{width:32px;height:25px;padding:2px;border:1px solid var(--ui-line,#e8eaf1);border-radius:5px;background:var(--ui-surface,#fff);cursor:pointer}.property-row input[type=number]{width:47px}.property-row input[type=number],.property-row select{border:1px solid var(--ui-line,#e8eaf1);background:var(--ui-bg,#fafafe);border-radius:5px;height:27px;box-sizing:border-box;padding:2px 6px;color:var(--ui-text,#273044);font-size:11px}.property-row select{max-width:103px}.check-row{display:flex;align-items:center;gap:8px;font-size:11px;margin:13px 0;color:var(--ui-muted,#8c96a7)}.check-row input{accent-color:var(--ui-accent,#7861e9)}.mini-button{height:24px;border:1px solid var(--ui-line,#e8eaf1);border-radius:4px;background:transparent;font-size:10px!important}.property-buttons{display:grid;grid-template-columns:1fr 1fr;gap:7px}.property-buttons button,.delete-button{font-size:10px!important;padding:7px 0;background:var(--ui-bg,#fafafe);border:1px solid var(--ui-line,#e8eaf1);border-radius:5px}.property-buttons button:hover{border-color:#9c8ce7}.delete-button{color:#ce5868!important;width:100%;margin-top:9px;background:#ef768609;border-color:#ef768622}.property-tip{font-size:10px;line-height:1.9;color:var(--ui-muted,#8c96a7);margin-top:28px}.board-mode .canvas-commandbar{justify-content:center;position:relative}.board-mode .commandbar-actions{position:absolute;right:16px}.scene-editor :focus-visible{outline:2px solid var(--ui-accent,#7861e9);outline-offset:2px}.scene-editor ::-webkit-scrollbar{width:5px;height:5px}.scene-editor ::-webkit-scrollbar-thumb{background:#bbc1d24f;border-radius:5px}@media(max-width:1100px){.shape-library{width:138px;flex-basis:138px;padding:17px 10px}.properties-panel{width:190px;flex-basis:190px;padding:18px 13px}.canvas-hint{display:none}.canvas-bottom{justify-content:flex-end}}@media(max-width:800px){.shape-library{display:none}.properties-panel{position:absolute;right:0;top:58px;bottom:0;z-index:8;box-shadow:-6px 0 20px #202c4510}.scene-editor{position:relative}.canvas-commandbar{padding:0 8px}.toolset{gap:1px}.toolset button{width:31px}.commandbar-actions .text-button{display:none}.board-mode .canvas-commandbar{justify-content:flex-start}.board-mode .commandbar-actions{right:6px}.tool-divider{margin:0 2px}.empty-canvas strong{font-size:12px}.empty-canvas span{font-size:10px}}@media(max-width:540px){.toolset button{width:27px;font-size:19px}.toolset button[aria-label="判断"],.toolset button[aria-label="移动画布"]{display:none}.properties-panel{width:180px}.canvas-commandbar{gap:3px}.empty-canvas{white-space:normal;width:80%}}
+</style>

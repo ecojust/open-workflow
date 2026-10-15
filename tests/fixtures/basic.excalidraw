@@ -1,0 +1,9 @@
+{
+  "type": "excalidraw", "version": 2, "source": "Open Workflow browser tests",
+  "elements": [
+    {"id":"box-a","type":"rectangle","x":40,"y":40,"width":180,"height":100,"angle":0,"strokeColor":"#1e293b","backgroundColor":"#dbeafe","fillStyle":"solid","strokeWidth":2,"strokeStyle":"solid","roughness":1,"opacity":100,"isDeleted":false,"boundElements":[{"type":"text","id":"text-a"}]},
+    {"id":"text-a","type":"text","x":65,"y":75,"width":130,"height":24,"angle":0,"strokeColor":"#1e293b","backgroundColor":"transparent","strokeWidth":1,"opacity":100,"text":"导入白板","fontSize":20,"fontFamily":2,"textAlign":"center","verticalAlign":"middle","containerId":"box-a","isDeleted":false},
+    {"id":"stroke-a","type":"freedraw","x":40,"y":180,"width":150,"height":30,"points":[[0,0],[40,20],[80,0],[120,30],[150,10]],"angle":0,"strokeColor":"#2563eb","backgroundColor":"transparent","strokeWidth":3,"opacity":100,"isDeleted":false}
+  ],
+  "appState":{"viewBackgroundColor":"#ffffff"}, "files":{}
+}

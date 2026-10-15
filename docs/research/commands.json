@@ -1,0 +1,116 @@
+{
+  "setup": [
+    "npm install --prefix /workspace/open-workflow-research/tools --no-audit --no-fund rea-agents@6.5.0",
+    "/workspace/open-workflow-research/tools/node_modules/.bin/rea --help",
+    "/workspace/open-workflow-research/tools/node_modules/.bin/rea analyze-javascript-application --help"
+  ],
+  "commands": [
+    {
+      "project": "drawio",
+      "executable": "/workspace/open-workflow-research/tools/node_modules/.bin/rea",
+      "args": [
+        "analyze-javascript-application",
+        "/workspace/open-workflow-research/upstream/drawio",
+        "--artifact-format",
+        "directory",
+        "--source-path",
+        "src/main/webapp/js/grapheditor/Editor.js",
+        "--max-semantic-nodes",
+        "2000",
+        "--max-semantic-nodes-per-file",
+        "2000",
+        "--max-heap-mb",
+        "256",
+        "--analysis-timeout-ms",
+        "15000",
+        "--format",
+        "json"
+      ],
+      "stdout": "/workspace/open-workflow-research/evidence/drawio-rea.json",
+      "exit_code": 0
+    },
+    {
+      "project": "excalidraw",
+      "executable": "/workspace/open-workflow-research/tools/node_modules/.bin/rea",
+      "args": [
+        "analyze-javascript-application",
+        "/workspace/open-workflow-research/upstream/excalidraw",
+        "--artifact-format",
+        "directory",
+        "--source-path",
+        "packages/element/src/binding.ts",
+        "--source-path",
+        "packages/element/src/linearElementEditor.ts",
+        "--source-path",
+        "packages/element/src/store.ts",
+        "--source-path",
+        "packages/excalidraw/history.ts",
+        "--max-semantic-nodes",
+        "6000",
+        "--max-semantic-nodes-per-file",
+        "2000",
+        "--max-heap-mb",
+        "256",
+        "--analysis-timeout-ms",
+        "15000",
+        "--format",
+        "json"
+      ],
+      "stdout": "/workspace/open-workflow-research/evidence/excalidraw-rea.json",
+      "exit_code": 0
+    },
+    {
+      "project": "mermaid",
+      "executable": "/workspace/open-workflow-research/tools/node_modules/.bin/rea",
+      "args": [
+        "analyze-javascript-application",
+        "/workspace/open-workflow-research/upstream/mermaid",
+        "--artifact-format",
+        "directory",
+        "--source-path",
+        "packages/mermaid/src/diagrams/flowchart/flowDb.ts",
+        "--max-semantic-nodes",
+        "2000",
+        "--max-semantic-nodes-per-file",
+        "2000",
+        "--max-heap-mb",
+        "256",
+        "--analysis-timeout-ms",
+        "15000",
+        "--format",
+        "json"
+      ],
+      "stdout": "/workspace/open-workflow-research/evidence/mermaid-rea.json",
+      "exit_code": 0
+    },
+    {
+      "project": "mxgraph",
+      "executable": "/workspace/open-workflow-research/tools/node_modules/.bin/rea",
+      "args": [
+        "analyze-javascript-application",
+        "/workspace/open-workflow-research/upstream/mxgraph",
+        "--artifact-format",
+        "directory",
+        "--source-path",
+        "javascript/src/js/io/mxModelCodec.js",
+        "--source-path",
+        "javascript/src/js/io/mxCellCodec.js",
+        "--source-path",
+        "javascript/src/js/model/mxGraphModel.js",
+        "--max-semantic-nodes",
+        "3000",
+        "--max-semantic-nodes-per-file",
+        "2000",
+        "--max-heap-mb",
+        "256",
+        "--analysis-timeout-ms",
+        "15000",
+        "--format",
+        "json"
+      ],
+      "stdout": "/workspace/open-workflow-research/evidence/mxgraph-rea.json",
+      "exit_code": 0
+    }
+  ],
+  "note": "REA treats --source-path as a repeatable flag. An initial JSON-array string invocation was rejected with invalid_request; it was corrected to repeatable flags. Failed raw response retained in /workspace/open-workflow-research/evidence/rea-invocation-error.json."
+}
