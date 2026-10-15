@@ -154,7 +154,7 @@ async function main() {
     assert.ok(preview.labels.length >= 2 && preview.primitives >= 2, 'Preview contains real diagram primitives and labels')
     const requiredLabels = {
       class: ['+String id', '+String name', '+int quantity'],
-      er: ['string email [UK]', 'decimal total', 'int quantity'],
+      er: ['string email [UK]', 'decimal(12) total', 'int quantity'],
       requirement: ['verifymethod: test', 'verifymethod: demonstration', 'docref: tests/account'],
     }[kind] || []
     const renderedText = preview.labels.join('').replace(/\s/g, '')
@@ -202,12 +202,13 @@ async function main() {
     const kinds = await page.locator('[data-diagram-kind]').evaluateAll(cards => [...new Set(cards.map(card => card.getAttribute('data-diagram-kind')))].sort())
     assert.deepEqual(kinds, Object.keys(diagramKinds).sort(), 'All 22 diagram families are discoverable')
     await page.getByLabel('搜索图表模板', { exact: true }).fill('radar')
-    await expect(page.locator('[data-diagram-kind]')).toHaveCount(1)
-    await page.locator('[data-diagram-kind="radar"]').click()
+    await expect.poll(() => page.locator('[data-diagram-kind]').count()).toBeGreaterThanOrEqual(2)
+    assert.deepEqual(await page.locator('[data-diagram-kind]').evaluateAll(cards => [...new Set(cards.map(card => card.getAttribute('data-diagram-kind')))]), ['radar'], 'Searching a diagram family shows all of its templates')
+    await page.locator('[data-diagram-kind="radar"]').first().click()
     await expect(page.getByTestId('diagram-confirm-template')).toBeVisible()
     await page.locator('[data-template-cancel]').click()
     assert.equal(await source.inputValue(), original)
-    await page.locator('[data-diagram-kind="radar"]').click()
+    await page.locator('[data-diagram-kind="radar"]').first().click()
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('diagram-confirm-template')).toHaveCount(0)
     await page.keyboard.press('Escape')
@@ -500,7 +501,7 @@ async function main() {
     const search = page.getByLabel('搜索图表模板', { exact: true })
     await expect(search).toBeFocused()
     await search.fill('packet')
-    await page.locator('[data-diagram-kind="packet"]').click()
+    await page.locator('[data-diagram-kind="packet"]').first().click()
     await assertFits(page, library)
     await page.getByTestId('diagram-confirm-template').click()
     await expect(page.getByTestId('diagram-preview').locator('svg')).toBeVisible()

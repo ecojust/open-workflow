@@ -5,7 +5,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
-const { spawn } = require('node:child_process')
+const { spawn, execFileSync } = require('node:child_process')
 const { chromium, expect } = require('@playwright/test')
 
 const root = path.resolve(__dirname, '../..')
@@ -257,12 +257,22 @@ async function main() {
 
   await test('diagram-source-location-all-22-template-types', async page => {
     await createDiagram(page)
-    const tokens = { flowchart: 'start([', sequence: 'User->>App', class: '+String id', state: 'Pending --> Paying', er: 'string id PK', gitgraph: 'commit id:', requirement: 'text: 系统应', c4: 'Person(customer', architecture: 'service frontend', pie: '"产品设计"', gantt: '需求梳理 :done', xychart: 'bar [35', quadrant: '搜索优化:', sankey: '预算,产品研发', radar: 'curve current', treemap: '"产品设计":', mindmap: 'goals[目标]', timeline: '第 1 周', journey: '了解产品:', kanban: 'research[', block: 'gateway[', packet: '0-15:' }
-    assert.equal(Object.keys(tokens).length, 22)
-    for (const [kind, token] of Object.entries(tokens)) {
-      await chooseTemplate(page, kind); const text = await page.getByTestId('diagram-source').inputValue()
-      const ids = await locateToken(page, token, text); assert.ok(ids.length, `${kind} maps the selected source content to generated elements`)
-      assert.ok(await highlights(page).first().isVisible(), `${kind} shows the location on its preview`)
+    const script = `import { DIAGRAM_TEMPLATES, DIAGRAM_KIND_LABELS } from './src/core/diagrams/catalog.ts';
+      import { compileCodeDiagram, lookupDiagramSource } from './src/core/code-diagram.ts';
+      console.log(JSON.stringify(Object.keys(DIAGRAM_KIND_LABELS).map(kind => {
+        const template = DIAGRAM_TEMPLATES.find(template => template.kind === kind), compiled = compileCodeDiagram(template.source);
+        const range = compiled.sourceMap[Math.floor(compiled.sourceMap.length / 2)], offset = range.start + Math.min(1, range.end - range.start - 1);
+        return { kind, source: template.source, offset, ids: lookupDiagramSource(compiled.sourceMap, offset).sort() };
+      })));`
+    const samples = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], { cwd: root, encoding: 'utf8' }))
+    assert.equal(samples.length, 22)
+    for (const sample of samples) {
+      const { kind, offset, ids } = sample
+      await chooseTemplate(page, kind); await expect(page.getByTestId('diagram-source')).toHaveValue(sample.source)
+      await caret(page, offset); await expect.poll(() => highlightedIds(page)).toEqual(ids)
+      assert.ok(ids.length, `${kind} maps the selected source content to generated elements`)
+      await expect(page.getByTestId('diagram-source-overlay')).toBeVisible()
+      assert.ok(await highlights(page).evaluateAll(groups => groups.some(group => [...group.querySelectorAll('path,rect')].some(shape => shape.localName === 'path' ? shape.getTotalLength() > 0 : Number(shape.getAttribute('width')) > 0 && Number(shape.getAttribute('height')) > 0))), `${kind} shows painted highlight geometry, including axis-aligned connectors`)
       await caret(page, 0); await expect(highlights(page)).toHaveCount(0)
     }
   })

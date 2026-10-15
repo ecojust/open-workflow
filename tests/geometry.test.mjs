@@ -6,7 +6,6 @@ import { layoutScene } from '../src/core/layout.ts'
 import { escapeXml, safeImageData, sceneToSvg, wrapText } from '../src/core/svg.ts'
 import { createDocument, CODE_DIAGRAM_SAMPLE } from '../src/core/documents.ts'
 import { compileCodeDiagram } from '../src/core/code-diagram.ts'
-import { STRUCTURAL_TEMPLATES } from '../src/core/diagrams/structure.ts'
 
 const shape = (id, x = 0, y = 0, kind = 'rectangle') => ({ id, type: 'shape', shape: kind, x, y, width: 160, height: 80, text: id, style: { ...DEFAULT_STYLE }, locked: false })
 const edge = (id, from, to, route = 'straight') => ({ id, type: 'edge', from: { x: 0, y: 0, nodeId: from }, to: { x: 0, y: 0, nodeId: to }, label: '', arrow: 'end', route, style: { ...DEFAULT_STYLE }, locked: false })
@@ -149,7 +148,22 @@ test('default code diagram reciprocal edges use distinct orthogonal routes and e
 })
 
 function stateRetryExample() {
-  const document = compileCodeDiagram(STRUCTURAL_TEMPLATES.find(template => template.id === 'state-order-lifecycle').source).scene
+  // Keep the routing regression independent of evolving catalog examples.
+  const document = compileCodeDiagram(`stateDiagram-v2
+direction LR
+state "待支付" as Pending
+state "支付中" as Paying
+state Decision <<choice>>
+state "已完成" as Done
+state "已取消" as Cancelled
+[*] --> Pending
+Pending --> Paying : 支付
+Pending --> Cancelled : 取消
+Paying --> Decision : 返回结果
+Decision --> Done : 成功
+Decision --> Pending : 失败重试
+Done --> [*]
+Cancelled --> [*]`).scene
   const retry = document.elements.find(element => element.type === 'edge' && element.label === '失败重试')
   const pending = document.elements.find(element => element.id === retry.to.nodeId)
   const decision = document.elements.find(element => element.id === retry.from.nodeId)
@@ -166,6 +180,20 @@ function assertClearOrthogonalRoute(points, nodes) {
     }
   }
 }
+test('forward bound connectors avoid intervening cards and return to a direct route after the obstruction moves', () => {
+  const start = shape('start'), blocker = shape('blocker', 320), finish = shape('finish', 640)
+  const connector = edge('forward', start.id, finish.id, 'orthogonal'), document = scene([start, blocker, finish, connector])
+  const endpoints = JSON.stringify([connector.from, connector.to]), route = edgePoints(connector, document)
+  assertClearOrthogonalRoute(route, [start, blocker, finish])
+  assert.ok(route.some(point => point.y < 0 || point.y > 80), 'The forward connection uses a visible outside lane')
+  document.elements.push({ ...shape('frame', -2000, -2000, 'frame'), width: 6000, height: 6000 }, { ...shape('caption', -1000, -1000, 'text'), width: 4000, height: 4000 })
+  assert.deepEqual(edgePoints(connector, document), route, 'Enclosing frames and captions do not obstruct connections')
+  blocker.y = 250
+  const restored = edgePoints(connector, document)
+  assert.ok(restored.every(point => point.y === 40), 'Moving the obstruction restores the direct connection')
+  assertClearOrthogonalRoute(restored, [start, blocker, finish])
+  assert.equal(JSON.stringify([connector.from, connector.to]), endpoints, 'Automatic routing preserves persisted bindings')
+})
 test('actual state retry takes the shortest clear outside lane and ignores enclosing frames or captions', () => {
   const { document, retry, pending, decision } = stateRetryExample(), before = JSON.stringify(document)
   const points = edgePoints(retry, document)
@@ -183,7 +211,7 @@ test('actual state retry takes the shortest clear outside lane and ignores enclo
   for (const point of points) assert.ok(point.x >= bounds.x && point.y >= bounds.y && point.x <= bounds.x + bounds.width && point.y <= bounds.y + bounds.height)
 })
 test('state retry recomputes its safe lane when the intervening payment node moves', () => {
-  const { document, retry, paying } = stateRetryExample(), before = edgePoints(retry, document), storedEndpoints = JSON.stringify([retry.from, retry.to])
+  const { document, retry, paying, decision } = stateRetryExample(), before = edgePoints(retry, document), storedEndpoints = JSON.stringify([retry.from, retry.to])
   paying.y = 70 // Still blocks the original y=130 return and needs a higher lane to retain clearance.
   const moved = edgePoints(retry, document)
   assert.notDeepEqual(moved, before)
@@ -194,7 +222,7 @@ test('state retry recomputes its safe lane when the intervening payment node mov
   for (const point of moved) assert.ok(point.x >= bounds.x && point.y >= bounds.y && point.x <= bounds.x + bounds.width && point.y <= bounds.y + bounds.height)
   paying.y = -200 // Clearing the obstruction restores the ordinary route instead of persisting a stale detour.
   const cleared = edgePoints(retry, document)
-  assert.equal(cleared[0].x, 940)
-  assert.equal(cleared[0].y, 130)
+  assert.equal(cleared[0].x, decision.x)
+  assert.equal(cleared[0].y, decision.y + decision.height / 2)
   assertClearOrthogonalRoute(cleared, document.elements.filter(element => element.type === 'shape'))
 })

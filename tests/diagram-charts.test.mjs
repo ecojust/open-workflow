@@ -92,7 +92,7 @@ test('gantt resolves forward references and implicit sequential starts but rejec
   invalid('gantt\nA:a,after b,1d\nB:b,after a,1d', /循环依赖/)
   invalid('gantt\nA:a,after missing,1d', /找不到依赖/, 2)
   invalid('gantt\nA:2d', /首个任务/, 2)
-  invalid('gantt\nexcludes weekends', /排除日期/, 2)
+  invalid('gantt\nexcludes 2026-02-30\nA:a,2026-01-01,1d', /无效日期/, 2)
   invalid('gantt\ndateFormat DD-MM-YYYY', /仅支持/, 2)
   invalid('gantt\nA:a,2026-01-02,2026-01-01', /结束时间/, 2)
 })
@@ -134,7 +134,7 @@ test('quadrant positions follow normalized coordinates and conventional quadrant
   invalid('quadrantChart\nA: [1.01,0.5]', /0 到 1/, 2)
   invalid('quadrantChart\nA: [0.2]', /数据格式/, 2)
   invalid('quadrantChart\nx-axis low', /坐标轴格式/, 2)
-  invalid('quadrantChart\nclassDef red fill:red', /样式指令/, 2)
+  invalid('quadrantChart\nclassDef red fill:red', /样式属性/, 2)
 })
 
 test('chart text is XML escaped and non-chart families remain available to other parsers', () => {
@@ -225,7 +225,7 @@ test('treemap keeps hierarchy, exact proportional leaf areas and a complete read
   assert.match(element(tiny, 'treemap-detail-0').text, /small/)
 })
 
-test('treemap rejects empty groups, nonpositive leaves, inconsistent indentation and unsupported classes', () => {
+test('treemap rejects empty groups, nonpositive leaves, inconsistent indentation and unknown classes', () => {
   invalid('treemap-beta\n"A"', /没有叶子/, 2)
   invalid('treemap-beta\n"A": 0', /大于零/, 2)
   invalid('treemap-beta\n"A": -1', /大于零/, 2)

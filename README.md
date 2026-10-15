@@ -16,7 +16,7 @@ Open Workflow 提供“画布”和“代码图表”两个入口。流程绘制
 - **绘制设置**：开启工具锁可连续绘制，按 `Esc` 返回选择；新建连线默认使用直角折线和终点箭头，绘制前可选择直线/折线及无箭头/单箭头/双箭头。
 - **线条外观**：顶部“全局线条”显示当前整洁/手绘模式，可统一调整实线/虚线/点线、线宽和颜色，也可独立修改选中图形；全局设置作用于现有元素（包含锁定元素）与后续图形、连线，新笔迹使用笔触面板的独立设置。
 - **直接编辑**：双击图形或连线修改文字，选择工具下双击空白处创建文字；右键菜单提供文字编辑、复制、锁定、删除，以及置顶、置底、上移一层、下移一层。
-- **代码图表**：自研解析、布局与绘制覆盖 22 类图表，提供分类、搜索和各类模板，显示预览、行号、语法错误与兼容提示；左侧移动光标或选择源码，右侧同步高亮对应图形，同一行的节点与连线也可分别定位。高亮只用于编辑辅助，可创建独立的画布副本继续编辑。每类支持明确的语法子集，详见 [格式说明](docs/FORMATS.md#代码图表语法子集)。
+- **代码图表**：自研解析、布局与绘制覆盖 22 类图表，提供 46 个带中文注释的综合示例，每类至少两个互补场景，可按类型、分类和源码关键词搜索。支持嵌套流程与时序、结构分组、工作日历、图表样式及更多数据表达；显示预览、行号、语法错误与兼容提示。左侧光标或选区与右侧图形高亮同步，也可生成独立画布副本。每类支持明确的语法子集，详见 [格式说明](docs/FORMATS.md#代码图表语法子集) 与 [语法和模板导览](docs/DIAGRAM_SYNTAX.md)。
 - **图表风格**：代码图表提供经典、极简、蓝图、水墨、手绘、森林、海洋、落日、紫雾、夜色十种全局风格，统一作用于整张图；预览、图像导出与可编辑副本保持一致，风格随原生文档和草稿保存，并支持撤销重做。
 - **统一工作台**：多文档标签、重命名、最近文档搜索、浅色/深色/跟随系统外观，以及本地草稿恢复。
 - **文件与导出**：原生 `.owflow`；图形 XML、白板 JSON 和文本图表导入导出；整图或选区 SVG/PNG 导出。导入时的原始文本可单独取回，兼容扩展名和结构见格式说明。
@@ -29,7 +29,7 @@ Open Workflow 提供“画布”和“代码图表”两个入口。流程绘制
 
 [查看自由白板](docs/screenshots/board.png) · [查看白板模板面板](docs/screenshots/whiteboard-templates.png) · [查看 22 类图表模板库](docs/screenshots/diagram-library.png)
 
-[查看代码图表](docs/screenshots/diagram.png) · [查看十种全局绘图风格](docs/screenshots/diagram-styles.png)
+[查看复杂图表与源码联动](docs/screenshots/diagram-comprehensive.png) · [查看代码图表](docs/screenshots/diagram.png) · [查看十种全局绘图风格](docs/screenshots/diagram-styles.png)
 
 [查看四方向大括弧](docs/screenshots/canvas-braces.png) · [查看窄屏画布](docs/screenshots/canvas-mobile.png)
 
@@ -69,6 +69,12 @@ node tests/browser/canvas-workspace.cjs
 
 ```sh
 node tests/browser/brush-cursor.cjs
+```
+
+单独检查复杂图表模板、源码注释和语法搜索：
+
+```sh
+node tests/browser/diagram-rich-templates.cjs
 ```
 
 `test:browser` 使用真实 Chromium，并在未设置 `BASE_URL` 时按需启动和关闭开发服务，默认端口为 5199；已有浏览器可通过 `CHROMIUM_EXECUTABLE` 指定。也可先运行生产构建与预览，再用 `BASE_URL=http://127.0.0.1:5199 npm run test:browser` 验证该服务。各套件的截图与结果默认写入 `/tmp/open-workflow-*` 目录，笔触与光标定位套件使用 `/tmp/open-workflow-brush-cursor`；可通过 `BROWSER_ARTIFACTS` 更改。Linux 测试环境缺少浏览器系统库时，可使用 `npx playwright install --with-deps chromium`。
@@ -119,7 +125,7 @@ node tests/browser/brush-cursor.cjs
 
 全局线条设置只统一本次调整的属性，并保存为后续图形和连线的默认值；新笔迹的颜色、粗细和不透明度由笔触面板独立设置。单独调整图形不会改变其他元素；再次修改同一全局属性时，会覆盖各元素此前的独立设置，包含锁定元素。专用笔触保留自己的纹理、笔尖和颜色规则，不叠加整洁/手绘或虚点线外观；已有笔迹可统一调整粗细与颜色，彩虹笔保持多色。普通移动、文字编辑、图层和删除操作仍遵守锁定状态。
 
-## 第一版的边界
+## 当前边界
 
 图形 XML 和白板 JSON 支持基础元素转换，部分分组、扩展形状和闭合图形依靠元数据恢复，不保证其他软件中的外观或往返完全一致。代码图表的 22 类图表均为语法子集，未知指令会报错。复杂图的自动布局可能需要手动调整。
 

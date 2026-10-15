@@ -70,7 +70,7 @@ const kindsList = computed(() => [...new Set(DIAGRAM_TEMPLATES.map(template => D
 const visibleTemplates = computed(() => {
   const search = templateSearch.value.trim().toLocaleLowerCase()
   return DIAGRAM_TEMPLATES.filter(template => (templateCategory.value === 'all' || template.category === templateCategory.value)
-    && (!search || `${template.title} ${template.description} ${DIAGRAM_KIND_LABELS[template.kind]} ${template.kind}`.toLocaleLowerCase().includes(search)))
+    && (!search || `${template.title} ${template.description} ${DIAGRAM_KIND_LABELS[template.kind]} ${template.kind} ${template.source}`.toLocaleLowerCase().includes(search)))
 })
 const syntaxTemplate = computed(() => DIAGRAM_TEMPLATES.find(template => template.kind === (compiled.value?.kind || 'flowchart')))
 const syntaxExample = computed(() => syntaxTemplate.value?.source || '')
@@ -309,9 +309,9 @@ parse()
           <footer><button type="button" data-template-cancel @click="backToTemplates">返回模板</button><button type="button" class="diagram-primary" data-testid="diagram-confirm-template" @click="applyTemplate(pendingTemplate)"><AppIcon name="check" :size="15"/>替换源码</button></footer>
         </template>
         <template v-else>
-          <div class="diagram-library-tools"><label class="diagram-template-search"><AppIcon name="search" :size="15"/><input ref="templateSearchInput" v-model="templateSearch" type="search" placeholder="搜索图表类型或用途" aria-label="搜索图表模板"/></label><div class="diagram-categories" role="group" aria-label="图表分类"><button type="button" :aria-pressed="templateCategory === 'all'" @click="templateCategory = 'all'">全部 <small>{{ kindsCount }}</small></button><button v-for="category in categories" :key="category" type="button" :aria-pressed="templateCategory === category" @click="templateCategory = category">{{ category }}</button></div></div>
-          <div class="diagram-template-grid"><button v-for="template in visibleTemplates" :key="template.id" type="button" class="diagram-template-card" :data-template-id="template.id" :data-diagram-kind="template.kind" :aria-label="`使用模板：${template.title}`" @click="chooseTemplate(template)"><span class="diagram-template-icon"><AppIcon :name="template.kind" :size="21"/></span><span class="diagram-template-copy"><strong>{{ template.title }}</strong><small>{{ template.description }}</small><span>{{ DIAGRAM_KIND_LABELS[template.kind] }}</span></span><AppIcon name="chevron-right" :size="14"/></button><p v-if="!visibleTemplates.length" class="diagram-no-templates">没有匹配的模板，试试其他关键词或分类。</p></div>
-          <footer><span>源码保存在当前文档中，可随时编辑。</span><button type="button" @click="closeTemplates()">取消</button></footer>
+          <div class="diagram-library-tools"><label class="diagram-template-search"><AppIcon name="search" :size="15"/><input ref="templateSearchInput" v-model="templateSearch" type="search" placeholder="搜索类型、用途或语法关键词" aria-label="搜索图表模板"/></label><div class="diagram-categories" role="group" aria-label="图表分类"><button type="button" :aria-pressed="templateCategory === 'all'" @click="templateCategory = 'all'">全部 <small>{{ DIAGRAM_TEMPLATES.length }}</small></button><button v-for="category in categories" :key="category" type="button" :aria-pressed="templateCategory === category" @click="templateCategory = category">{{ category }}</button></div></div>
+          <div class="diagram-template-grid"><button v-for="template in visibleTemplates" :key="template.id" type="button" class="diagram-template-card" :data-template-id="template.id" :data-diagram-kind="template.kind" :aria-label="`使用模板：${template.title}`" @click="chooseTemplate(template)"><span class="diagram-template-icon"><AppIcon :name="template.kind" :size="21"/></span><span class="diagram-template-copy"><strong>{{ template.title }}</strong><small>{{ template.description }}</small><span>{{ DIAGRAM_KIND_LABELS[template.kind] }} · {{ template.source.split('\n').length }} 行示例</span></span><AppIcon name="chevron-right" :size="14"/></button><p v-if="!visibleTemplates.length" class="diagram-no-templates">没有匹配的模板，试试其他关键词或分类。</p></div>
+          <footer><span>{{ kindsCount }} 类图表 · {{ visibleTemplates.length }} 个示例 · 注释说明语法用法</span><button type="button" @click="closeTemplates()">取消</button></footer>
         </template>
       </section>
     </div>

@@ -11,8 +11,8 @@ const edges = result => result.scene.elements.filter(element => element.type ===
 const texts = result => shapes(result).map(node => node.text)
 const invalid = (source, line, message) => assert.throws(() => compile(source), error => error instanceof DiagramSyntaxError && error.line === line && (!message || error.message.includes(message)))
 
-test('all seven rich templates deterministically compile, export valid SVG and round trip through native documents', () => {
-  assert.equal(STRUCTURAL_TEMPLATES.length, 7)
+test('every structural family has complementary rich templates that compile and round trip deterministically', () => {
+  for (const kind of ['class', 'state', 'er', 'gitgraph', 'requirement', 'c4', 'architecture']) assert.ok(STRUCTURAL_TEMPLATES.filter(template => template.kind === kind).length >= 2)
   for (const template of STRUCTURAL_TEMPLATES) {
     const result = compile(template.source)
     assert.equal(result.kind, template.kind)

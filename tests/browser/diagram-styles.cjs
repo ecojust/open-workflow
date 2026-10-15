@@ -206,7 +206,7 @@ async function main() {
     await expect(page.getByTestId('scene-editor')).toBeVisible()
     const editable = await save(page)
     assert.equal(editable.document.kind, 'flow')
-    assert.ok(editable.document.scene.elements.some(element => element.type === 'shape' && element.text === (style === 'midnight' ? '团队时间分配' : '开始评审')))
+    assert.ok(editable.document.scene.elements.some(element => element.type === 'shape' && element.text && appearance.labels.includes(element.text)), 'The editable copy preserves actual preview text from the chosen example')
     if (style === 'midnight') {
       const slices = editable.document.scene.elements.filter(element => element.type === 'stroke' && element.closed)
       assert.ok(slices.length >= 3 && new Set(slices.map(slice => slice.style.fill)).size >= 3, 'Night styling preserves distinct chart data categories')

@@ -59,7 +59,7 @@ test('comments and CRLF preserve diagnostic source line numbers', () => {
 })
 
 test('unsupported syntax, malformed input and unsupported types fail visibly', () => {
-  for (const source of ['', 'unknownDiagram\nA --> B', 'flowchart TD\nA -->', 'flowchart TD\nA[Oops', 'flowchart TD\nA["Oops]', 'flowchart TD\nA & B --> C', 'flowchart TD\nA:::red', 'flowchart TD\nclick A "https://example.com"']) {
+  for (const source of ['', 'unknownDiagram\nA --> B', 'flowchart TD\nA -->', 'flowchart TD\nA[Oops', 'flowchart TD\nA["Oops]', 'flowchart TD\nA & --> C', 'flowchart TD\nA:::red', 'flowchart TD\nclick A "https://example.com"']) {
     assert.throws(() => compileCodeDiagram(source), error => error instanceof DiagramSyntaxError && error.line > 0, source)
   }
 })
@@ -103,7 +103,7 @@ test('sequence text punctuation is retained and participants may be implicit', (
   assert.ok(edges(result).some(edge => edge.arrow === 'both'))
 })
 
-test('unsupported sequence control blocks and activation markers have exact line errors', () => {
+test('unclosed sequence fragments and activation markers have exact line errors', () => {
   for (const line of ['loop Repeat', 'A->>+B: work', 'activate B', 'Note left of A,B: invalid', 'autonumber 1 0']) {
     assert.throws(() => compileCodeDiagram(`sequenceDiagram\nparticipant A\n${line}`), error => error instanceof DiagramSyntaxError && error.line === 3, line)
   }

@@ -5,11 +5,13 @@ import { DIAGRAM_TEMPLATES, DIAGRAM_KIND_LABELS } from '../src/core/diagrams/cat
 import { compileCodeDiagram, DiagramSyntaxError } from '../src/core/code-diagram.ts'
 import { createDocument, serializeDocument, parseDocument, validateScene } from '../src/core/documents.ts'
 import { sceneToSvg } from '../src/core/svg.ts'
+import { applyDiagramStyle, DIAGRAM_STYLES } from '../src/core/diagram-appearance.ts'
 
 test('the searchable catalog exposes a unique working template for every supported diagram kind', () => {
   assert.equal(Object.keys(DIAGRAM_KIND_LABELS).length, 22)
   assert.equal(new Set(DIAGRAM_TEMPLATES.map(template => template.id)).size, DIAGRAM_TEMPLATES.length)
   assert.deepEqual(new Set(DIAGRAM_TEMPLATES.map(template => template.kind)), new Set(Object.keys(DIAGRAM_KIND_LABELS)))
+  for (const kind of Object.keys(DIAGRAM_KIND_LABELS)) assert.ok(DIAGRAM_TEMPLATES.filter(template => template.kind === kind).length >= 2, `${kind}: complementary syntax examples`)
   for (const template of DIAGRAM_TEMPLATES) {
     assert.ok(template.title && template.description && template.category, template.id)
     const result = compileCodeDiagram(template.source)
@@ -27,6 +29,20 @@ test('the searchable catalog exposes a unique working template for every support
     assert.equal(xml.documentElement.nodeName, 'svg', template.id)
     assert.deepEqual(errors, [], template.id)
     assert.ok(!/NaN|Infinity/.test(sceneToSvg(result.scene)), template.id)
+  }
+})
+
+test('comprehensive examples retain valid geometry and text in all drawing styles', () => {
+  for (const template of DIAGRAM_TEMPLATES) {
+    const scene = compileCodeDiagram(template.source).scene, original = structuredClone(scene)
+    for (const style of DIAGRAM_STYLES) {
+      const painted = applyDiagramStyle(scene, style.id), validated = validateScene(painted), svg = sceneToSvg(validated)
+      assert.equal(validated.elements.length, scene.elements.length, `${template.id}/${style.id}`)
+      assert.ok(!/NaN|Infinity/.test(svg), `${template.id}/${style.id}: finite export`)
+      assert.deepEqual(validated.elements.filter(element => element.type === 'shape').map(element => element.text), scene.elements.filter(element => element.type === 'shape').map(element => element.text), `${template.id}/${style.id}: labels survive styling`)
+      assert.ok(svg.startsWith('<svg'), `${template.id}/${style.id}: SVG export`)
+    }
+    assert.deepEqual(scene, original, `${template.id}: styling does not mutate compiler output`)
   }
 })
 

@@ -122,7 +122,7 @@ test('kanban columns, cards and bounded metadata become visible editable content
 })
 
 test('kanban rejects unknown, duplicate or invalid metadata and nested cards', () => {
-  for (const metadata of ["url: 'https://example.com'", "assigned: 'A', assigned: 'B'", "priority: 'Medium'", "priority: 'High', garbage"]) syntaxError(`kanban\n  todo[待办]\n    task[任务]@{ ${metadata} }`, 3)
+  for (const metadata of ["url: 'https://example.com'", "assigned: 'A', assigned: 'B'", "priority: 'Urgent'", "priority: 'High', garbage"]) syntaxError(`kanban\n  todo[待办]\n    task[任务]@{ ${metadata} }`, 3)
   syntaxError('kanban\n  todo[待办]\n    task[任务]\n      nested[嵌套]', 4)
   syntaxError('kanban\n  todo[待办]\n    task[甲]\n    task[乙]', 4)
   syntaxError('kanban\n\ttodo[待办]', 2)
@@ -147,14 +147,14 @@ next -->|交付| final`)
   assert.equal(compile('block\ncolumns 2\na[A] b[B]\na --> b').kind, 'block')
 })
 
-test('block parser refuses unresolved references, duplicate ids, bad spans and unsupported nesting', () => {
+test('block parser refuses unresolved references, duplicate ids, bad spans and malformed nesting', () => {
   syntaxError('block-beta\ncolumns 2\na[A]\na --> missing', 4)
   syntaxError('block-beta\na[A] a[B]', 2)
   syntaxError('block-beta\ncolumns 2\na[A]:3', 3)
   syntaxError('block-beta\ncolumns 13\na[A]', 2)
   syntaxError('block-beta\ncolumns 0\na[A]', 2)
-  syntaxError('block-beta\nblock:group\na[A]\nend', 2)
-  syntaxError('block-beta\na[A]\nstyle a fill:red', 3)
+  syntaxError('block-beta\nblock:group\na[A]', 2)
+  syntaxError('block-beta\na[A]\nstyle a filter:url(x)', 3)
 })
 
 test('packet fields use true bit widths and split exactly at a 32-bit boundary', () => {

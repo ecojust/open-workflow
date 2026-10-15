@@ -185,8 +185,8 @@ function routeCrossesBounds(points: Point[], bounds: Bounds, skipFirst = false, 
   }
   return false
 }
-/** A bounded fallback for back edges, not a general graph obstacle router. */
-function avoidReturnObstacles(points: Point[], fromNode: ShapeElement, toNode: ShapeElement, shapes: ShapeElement[]): Point[] {
+/** Try four bounded outside lanes when an orthogonal edge crosses a node. */
+function avoidNodeObstacles(points: Point[], fromNode: ShapeElement, toNode: ShapeElement, shapes: ShapeElement[]): Point[] {
   // Captions and enclosing frames must not turn an ordinary edge into a diagram-sized detour.
   const obstacles = shapes.filter(node => node !== fromNode && node !== toNode && node.shape !== 'text' && node.shape !== 'frame' && !isBraceShape(node.shape))
   if (!obstacles.some(node => routeCrossesBounds(points, node))) return points
@@ -224,7 +224,7 @@ export function edgePoints(edge: EdgeElement, scene: Scene): Point[] {
   if (edge.route === 'orthogonal') {
     const horizontal = Math.abs(toCenter.x - fromCenter.x) > Math.abs(toCenter.y - fromCenter.y)
     const returning = horizontal ? fromCenter.x > toCenter.x : fromCenter.y > toCenter.y
-    const finishRoute = (points: Point[]) => returning && fromNode && toNode ? avoidReturnObstacles(points, fromNode, toNode, shapes) : points
+    const finishRoute = (points: Point[]) => fromNode && toNode ? avoidNodeObstacles(points, fromNode, toNode, shapes) : points
     if (fromNode && toNode) {
       const reverse = scene.elements.some(other => other.type === 'edge' && other.id !== edge.id && other.from.nodeId === toNode.id && other.to.nodeId === fromNode.id)
       // Keep the forward route direct and put its reciprocal on a separate outside lane.
