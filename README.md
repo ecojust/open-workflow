@@ -2,7 +2,7 @@
 
 把流程图、自由白板与文字绘图放在同一个本地工作台。
 
-Open Workflow 0.1.0 正在开发中，暂未发布正式安装包。编辑器使用自己的场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换。Vue 3 负责应用界面，Tauri 2 提供桌面外壳；没有内嵌 draw.io、Excalidraw、Mermaid 或 Vue Flow 编辑引擎。界面布局参考 [Open Office](https://github.com/ecojust/open-office)，研究方法和 REA 分析记录见 [RESEARCH.md](docs/RESEARCH.md)。
+Open Workflow 0.1.0 提供流程图、自由白板和文字绘图三种工作区。编辑器使用自己的场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换。Vue 3 负责应用界面，Tauri 2 提供桌面外壳；没有内嵌 draw.io、Excalidraw、Mermaid 或 Vue Flow 编辑引擎。界面布局参考 [Open Office](https://github.com/ecojust/open-office)，研究方法和 REA 分析记录见 [RESEARCH.md](docs/RESEARCH.md)。
 
 ![Open Workflow 工作台](docs/screenshots/home.png)
 
@@ -52,7 +52,7 @@ npm run test:browser
 
 `test:browser` 使用真实 Chromium，并在需要时启动开发服务。已有 Chromium 可通过 `CHROMIUM_EXECUTABLE` 指定；`BASE_URL` 可指定已启动的服务。基础交互、画布细节和扩展工作区测试的截图与结果默认分别写入 `/tmp/open-workflow-browser`、`/tmp/open-workflow-refinements`、`/tmp/open-workflow-expanded`，可通过 `BROWSER_ARTIFACTS` 更改。Linux 测试环境缺少浏览器系统库时，可使用 `npx playwright install --with-deps chromium`。
 
-桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。仓库配置了 Windows x64、Mac Apple Silicon 与 Mac Intel 构建，开发产物可保存在 Actions artifacts。当前尚无正式 Release 安装包；后续发布流程见 [发布约定](.github/RELEASING.md)。
+桌面开发使用 `npm run desktop:dev`，构建使用 `npm run desktop:build`；另需 Rust 和系统构建依赖，见 [桌面版说明](docs/DESKTOP.md)。仓库配置了 Windows x64、Mac Apple Silicon 与 Mac Intel 构建，开发产物可保存在 Actions artifacts。正式安装包从 [版本发布页](https://github.com/ecojust/open-workflow/releases/latest) 下载；发布流程见 [发布约定](.github/RELEASING.md)。
 
 ## 保存到哪里
 

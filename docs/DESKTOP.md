@@ -42,7 +42,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features -
 
 `.github/workflows/desktop-build.yml` 在 Windows x64、Apple Silicon Mac 和 Intel Mac 分别执行前端检查、Rust 文件操作测试和原生安装包构建。产物包括安装包、`SHA256SUMS`、提交版本信息及许可说明，作为 Actions artifacts 保存 14 天。
 
-当前处于开发阶段，暂未发布正式安装包；本轮画布细节打磨期间暂停发布。`.github/workflows/publish-release.yml` 接收已成功的构建运行 ID 与完整源提交 SHA，校验三个安装包后发布正式版本，附带准确源版本的源码归档、校验文件和构建信息。详见 [发布约定](../.github/RELEASING.md)。
+正式安装包从 [版本发布页](https://github.com/ecojust/open-workflow/releases/latest) 下载。`.github/workflows/publish-release.yml` 接收已成功的构建运行 ID 与完整源提交 SHA，校验三个安装包后发布正式版本，附带准确源版本的源码归档、校验文件和构建信息。详见 [发布约定](../.github/RELEASING.md)。
 
 Windows 生成 NSIS 安装程序；Mac 生成 DMG。当前配置没有商业代码签名及 Apple 公证，Mac 使用临时签名。构建成功并不等于所有平台的交互功能已完成实机验收。
 
