@@ -2,6 +2,7 @@ import { DEFAULT_STYLE, clone, emptyScene, newId } from './types.ts'
 import type { DocumentKind, ElementStyle, Scene, SceneElement, WorkflowDocument } from './types.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from './appearance.ts'
 import { normalizeDiagramStyle } from './diagram-appearance.ts'
+import { readBrushData } from './brushes.ts'
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 const MAX_ELEMENTS = 5000
@@ -69,7 +70,7 @@ export function validateScene(value: unknown): Scene {
     }
     if (e.type === 'stroke') {
       if (!Array.isArray(e.points) || e.points.length < (e.closed === true ? 3 : 1) || (points += e.points.length) > 100000) throw new Error('笔迹为空或总点数超过 100000。')
-      return { ...base, type: 'stroke', ...(e.closed === true ? { closed: true } : {}), points: e.points.map((p: unknown) => { const point = object(p); return { x: number(point.x, '笔迹 X'), y: number(point.y, '笔迹 Y') } }) }
+      return { ...base, type: 'stroke', ...(e.closed === true ? { closed: true } : {}), ...readBrushData(e.brush, e.pressures, e.points.length), points: e.points.map((p: unknown) => { const point = object(p); return { x: number(point.x, '笔迹 X'), y: number(point.y, '笔迹 Y') } }) }
     }
     throw new Error('文件中有不支持的画布元素。')
   })
@@ -119,7 +120,7 @@ export function contentKey(doc: WorkflowDocument): string {
     const base = [element.id, element.type, element.locked, styleKey(element.style), ...(element.groupId ? [element.groupId] : [])]
     if (element.type === 'shape') return [...base, element.shape, element.x, element.y, element.width, element.height, element.text, element.imageData ?? null]
     if (element.type === 'edge') return [...base, [element.from.x, element.from.y, element.from.nodeId ?? null], [element.to.x, element.to.y, element.to.nodeId ?? null], element.label, element.arrow, element.route]
-    return [...base, element.points.map(point => [point.x, point.y]), ...(element.closed ? [true] : [])]
+    return [...base, element.points.map(point => [point.x, point.y]), ...(element.closed ? [true] : []), ...(element.brush !== undefined || element.pressures !== undefined ? [{ brush: element.brush ?? null, pressures: element.pressures ?? null }] : [])]
   })
   const identity: unknown[] = [doc.title, doc.kind, doc.scene.background, doc.scene.grid, styleKey(sceneDefaultStyle(doc.scene)), elements, doc.source]
   const diagramStyle = normalizeDiagramStyle(doc.diagramStyle)

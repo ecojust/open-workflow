@@ -1,6 +1,6 @@
 import type { SceneElement, ShapeElement } from '../types.ts'
 import {
-  DiagramSyntaxError, diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram, sourceLines,
+  DiagramSyntaxError, DiagramSourceMap, diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram, sourceLines,
   type DiagramResult, type DiagramTemplate, type SourceLine,
 } from './common.ts'
 
@@ -18,7 +18,11 @@ function content(line: SourceLine): string {
     if (quote) { if (char === quote) quote = ''; continue }
     if (char === '"' || (char === "'" && !/[\p{L}\p{N}]/u.test(line.text[index - 1] ?? ''))) { quote = char; continue }
     if (line.text.slice(index, index + 3) === '%%{') return line.text
-    if (line.text.slice(index, index + 2) === '%%') return line.text.slice(0, index).trimEnd()
+    if (line.text.slice(index, index + 2) === '%%') {
+      const parsed = line.text.slice(0, index).trimEnd()
+      line.end = line.start + parsed.length
+      return parsed
+    }
   }
   return line.text
 }
@@ -99,6 +103,7 @@ function descriptor(value: string, line: number, bare = true): Descriptor {
 
 interface TreeNode extends Descriptor { id: string; line: number; indent: number; children: TreeNode[]; weight: number; width: number; height: number; x: number; y: number; color: number }
 function mindmap(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const nodes: TreeNode[] = []; const stack: TreeNode[] = []; const explicit = new Set<string>(); const warnings: string[] = []
   for (const entry of lines.slice(1)) {
     const raw = content(entry); if (!raw.trim()) continue
@@ -116,6 +121,7 @@ function mindmap(lines: SourceLine[]): DiagramResult {
       stack[stack.length - 1]!.children.push(node); stack.push(node)
     }
     if (stack.length > 20) fail('思维导图最多支持 20 层。', entry.line)
+    sources.add(entry.line, node.id)
     nodes.push(node)
     if (nodes.length > 200) fail('思维导图最多支持 200 个节点。', entry.line)
     if (data.approximate) warnings.push('双边框和体育场形节点显示为矩形，标签及树关系保留。')
@@ -141,21 +147,22 @@ function mindmap(lines: SourceLine[]): DiagramResult {
   const elements: SceneElement[] = []
   for (const node of nodes) for (const child of node.children) elements.push(diagramEdge(`mindmap-edge-${child.id}`, { x: node.x + node.width / 2, y: node.y + node.height / 2, nodeId: node.id }, { x: child.x + child.width / 2, y: child.y + child.height / 2, nodeId: child.id }, '', { arrow: 'none', route: 'orthogonal', style: { stroke: INKS[child.color]! } }))
   for (const node of nodes) elements.push(diagramNode(node.id, node.text, node.x, node.y, node.width, node.height, node.shape, { fill: node === root ? '#1e3a8a' : COLORS[node.color]!, stroke: node === root ? '#ffffff' : INKS[node.color]!, strokeWidth: node === root ? 0 : 2, fontSize: node === root ? 20 : 16 }))
-  return finishDiagram('mindmap', elements, warnings)
+  return finishDiagram('mindmap', elements, warnings, sources)
 }
 
-interface Period { text: string; events: string[]; section: string; group: number; line: number }
+interface Period { text: string; events: string[]; eventLines: number[]; section: string; group: number; line: number }
 function timeline(lines: SourceLine[], vertical: boolean): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const periods: Period[] = []; let title = ''; let section = ''; let group = 0; let current: Period | undefined; let sectionUsed = true
   for (const entry of lines.slice(1)) {
     const raw = content(entry).trim(); if (!raw) continue; rejectDirective(raw, entry.line)
-    if (/^title\s+/.test(raw)) { if (title || periods.length || section) fail('标题只能在时间轴数据之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); continue }
-    if (/^section\s+/.test(raw)) { if (!sectionUsed) fail('上一个 section 没有时间段。', entry.line); section = label(raw.slice(8), entry.line); group++; current = undefined; sectionUsed = false; continue }
+    if (/^title\s+/.test(raw)) { if (title || periods.length || section) fail('标题只能在时间轴数据之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); sources.add(entry.line, 'timeline-title'); continue }
+    if (/^section\s+/.test(raw)) { if (!sectionUsed) fail('上一个 section 没有时间段。', entry.line); section = label(raw.slice(8), entry.line); sources.add(entry.line, `timeline-section-${periods.length}`); group++; current = undefined; sectionUsed = false; continue }
     const parts = splitQuoted(raw, ':', entry.line)
     if (parts.length < 2) fail('时间轴需要「时间段 : 事件」；续行事件以冒号开头。', entry.line)
     const events = parts.slice(1).map(part => label(part, entry.line))
-    if (!parts[0]) { if (!current) fail('续行事件之前需要一个时间段。', entry.line); current.events.push(...events) }
-    else { current = { text: label(parts[0], entry.line), events, section, group, line: entry.line }; periods.push(current); sectionUsed = true }
+    if (!parts[0]) { if (!current) fail('续行事件之前需要一个时间段。', entry.line); current.events.push(...events); current.eventLines.push(...events.map(() => entry.line)) }
+    else { current = { text: label(parts[0], entry.line), events, eventLines: events.map(() => entry.line), section, group, line: entry.line }; periods.push(current); sectionUsed = true }
     if (periods.length > 80 || periods.reduce((sum, period) => sum + period.events.length, 0) > 240) fail('时间轴最多支持 80 个时间段、240 个事件。', entry.line)
   }
   if (!periods.length || !sectionUsed) fail('时间轴的每个分区至少需要一个时间段。', lines.at(-1)!.line)
@@ -189,22 +196,27 @@ function timeline(lines: SourceLine[], vertical: boolean): DiagramResult {
       period.events.forEach((event, eventIndex) => { const height = textHeight(event, 230); elements.push(diagramNode(`timeline-event-${index}-${eventIndex}`, event, x, y, 230, height, 'rectangle', { fill: '#f8fafc', stroke: INKS[color]!, textAlign: 'left' })); y += height + 14 })
     }
   }
-  return finishDiagram('timeline', elements)
+  periods.forEach((period, index) => {
+    sources.add(period.line, `timeline-period-${index}`, `timeline-dot-${index}`, `timeline-axis-${index}`)
+    period.eventLines.forEach((line, eventIndex) => sources.add(line, `timeline-event-${index}-${eventIndex}`))
+  })
+  return finishDiagram('timeline', elements, [], sources)
 }
 
-interface JourneyTask { text: string; score: number; actors: string[]; section: string; group: number }
+interface JourneyTask { line: number; text: string; score: number; actors: string[]; section: string; group: number }
 function journey(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const tasks: JourneyTask[] = []; const actors: string[] = []; let title = ''; let section = ''; let group = 0; let sectionUsed = true
   for (const entry of lines.slice(1)) {
     const raw = content(entry).trim(); if (!raw) continue; rejectDirective(raw, entry.line)
-    if (/^title\s+/.test(raw)) { if (title || tasks.length || section) fail('标题只能在旅程数据之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); continue }
-    if (/^section\s+/.test(raw)) { if (!sectionUsed) fail('上一个 section 没有任务。', entry.line); section = label(raw.slice(8), entry.line); group++; sectionUsed = false; continue }
+    if (/^title\s+/.test(raw)) { if (title || tasks.length || section) fail('标题只能在旅程数据之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); sources.add(entry.line, 'journey-title'); continue }
+    if (/^section\s+/.test(raw)) { if (!sectionUsed) fail('上一个 section 没有任务。', entry.line); section = label(raw.slice(8), entry.line); sources.add(entry.line, `journey-section-${tasks.length}`); group++; sectionUsed = false; continue }
     const parts = splitQuoted(raw, ':', entry.line)
     if (parts.length !== 3 || !/^[0-5]$/.test(parts[1]!)) fail('旅程任务需要「任务 : 0 到 5 的整数评分 : 参与者, 参与者」。', entry.line)
     const members = splitQuoted(parts[2]!, ',', entry.line).map(value => label(value, entry.line))
     if (new Set(members).size !== members.length) fail('同一任务的参与者不能重复。', entry.line)
     for (const actor of members) if (!actors.includes(actor)) actors.push(actor)
-    tasks.push({ text: label(parts[0]!, entry.line), score: Number(parts[1]), actors: members, section, group }); sectionUsed = true
+    tasks.push({ line: entry.line, text: label(parts[0]!, entry.line), score: Number(parts[1]), actors: members, section, group }); sectionUsed = true
     if (tasks.length > 80 || actors.length > 16) fail('旅程图最多支持 80 个任务和 16 位参与者。', entry.line)
   }
   if (!tasks.length || !sectionUsed) fail('旅程图的每个分区至少需要一个任务。', lines.at(-1)!.line)
@@ -227,12 +239,14 @@ function journey(lines: SourceLine[]): DiagramResult {
     elements.push(diagramNode(`journey-rating-${index}`, `${task.score}/5`, cx - 24, cy - 24, 48, 48, 'ellipse', { fill: COLORS[color]!, stroke: INKS[color]!, fontSize: 14 }))
     for (const actor of task.actors) { const actorIndex = actors.indexOf(actor); elements.push(diagramNode(`journey-member-${index}-${actorIndex}`, '●', cx - 16, actorTop + actorIndex * 52 + 7, 32, 32, 'ellipse', { fill: COLORS[actorIndex % COLORS.length]!, stroke: INKS[actorIndex % INKS.length]!, fontSize: 16, strokeWidth: 1 })) }
   }
-  return finishDiagram('journey', elements)
+  tasks.forEach((task, index) => sources.add(task.line, `journey-task-${index}`, `journey-rating-${index}`, `journey-link-${index}`, ...task.actors.map(actor => `journey-member-${index}-${actors.indexOf(actor)}`)))
+  return finishDiagram('journey', elements, [], sources)
 }
 
 interface KanbanCard { text: string; meta: Record<string, string>; line: number }
-interface KanbanColumn { text: string; cards: KanbanCard[] }
+interface KanbanColumn { line: number; text: string; cards: KanbanCard[] }
 function kanban(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const columns: KanbanColumn[] = []; const ids = new Set<string>(); let base: number | undefined; let cardIndent: number | undefined; let cardCount = 0
   for (const entry of lines.slice(1)) {
     const raw = content(entry).trim(); if (!raw) continue; rejectDirective(raw, entry.line)
@@ -252,7 +266,7 @@ function kanban(lines: SourceLine[]): DiagramResult {
     const data = descriptor(nodeText, entry.line)
     if (data.shape !== 'rectangle' || data.approximate || new RegExp(`^(?:${ID})?\\(`, 'u').test(nodeText)) fail('看板列与卡片使用普通文本或 id[标签]。', entry.line)
     if (data.explicit) { if (ids.has(data.explicit)) fail(`ID「${data.explicit}」重复。`, entry.line); ids.add(data.explicit) }
-    if (level === base) { if (metaIndex >= 0) fail('metadata 只适用于卡片。', entry.line); columns.push({ text: data.text, cards: [] }) }
+    if (level === base) { if (metaIndex >= 0) fail('metadata 只适用于卡片。', entry.line); columns.push({ line: entry.line, text: data.text, cards: [] }) }
     else {
       if (level < base || !columns.length) fail('卡片必须缩进在列下面。', entry.line)
       if (cardIndent === undefined) cardIndent = level
@@ -272,7 +286,11 @@ function kanban(lines: SourceLine[]): DiagramResult {
     let y = 128
     column.cards.forEach((card, cardIndex) => { const text = cardLabel(card); const height = textHeight(text, 248, 84); const high = card.meta.priority === 'High' || card.meta.priority === 'Very High'; elements.push(diagramNode(`kanban-card-${index}-${cardIndex}`, text, x + 16, y, 248, height, 'rectangle', { fill: '#ffffff', stroke: high ? '#be123c' : '#475569', strokeWidth: high ? 2 : 1, textAlign: 'left', fontSize: 15 })); y += height + 16 })
   })
-  return finishDiagram('kanban', elements)
+  columns.forEach((column, index) => {
+    sources.add(column.line, `kanban-column-${index}`, `kanban-title-${index}`)
+    column.cards.forEach((card, cardIndex) => sources.add(card.line, `kanban-card-${index}-${cardIndex}`))
+  })
+  return finishDiagram('kanban', elements, [], sources)
 }
 
 interface BlockEntry { id?: string; descriptor?: Descriptor; span: number; line: number }
@@ -294,6 +312,7 @@ function blockTokens(raw: string, line: number): string[] {
 }
 
 function block(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const entries: BlockEntry[] = []; const links: BlockLink[] = []; const ids = new Set<string>(); const warnings: string[] = []; let columns: number | undefined; let declaredColumns = false
   for (const entry of lines.slice(1)) {
     const raw = content(entry).trim(); if (!raw) continue; rejectDirective(raw, entry.line)
@@ -304,7 +323,10 @@ function block(lines: SourceLine[]): DiagramResult {
     if (connection || labeled) {
       links.push(connection ? { from: connection[1]!, to: connection[4]!, label: connection[3] ? label(connection[3], entry.line) : '', arrow: connection[2] === '---' ? 'none' : connection[2] === '<-->' ? 'both' : 'end', line: entry.line } : { from: labeled![1]!, to: labeled![3]!, label: label(labeled![2]!, entry.line), arrow: 'end', line: entry.line }); continue
     }
+    let sourceCursor = 0
+    const sourceStart = entry.start + entry.text.length - entry.text.trimStart().length
     for (const token of blockTokens(raw, entry.line)) {
+      const tokenStart = raw.indexOf(token, sourceCursor); sourceCursor = tokenStart + token.length
       const spanMatch = token.match(/:(\d+)$/); const span = spanMatch ? Number(spanMatch[1]) : 1; const nodeValue = spanMatch ? token.slice(0, spanMatch.index) : token
       if (span < 1 || span > 12 || (columns !== undefined && span > columns)) fail('节点跨度必须在 1 到列数之间，且不超过 12。', entry.line)
       if (nodeValue === 'space') entries.push({ span, line: entry.line })
@@ -313,6 +335,7 @@ function block(lines: SourceLine[]): DiagramResult {
         if (!new RegExp(`^${ID}$`, 'u').test(id)) fail('block 节点必须有 ID，例如 item[标签]。', entry.line)
         if (ids.has(id)) fail(`节点 ID「${id}」重复。`, entry.line); ids.add(id)
         if (data.approximate) warnings.push('双边框和体育场形节点显示为矩形，标签及跨度保留。')
+        sources.range(sourceStart + tokenStart, sourceStart + sourceCursor, `block-${id}`)
         entries.push({ id, descriptor: data, span, line: entry.line })
       }
       if (ids.size > 200 || entries.length > 240) fail('block 最多支持 200 个节点和 240 个网格项目。', entry.line)
@@ -332,15 +355,17 @@ function block(lines: SourceLine[]): DiagramResult {
   }
   const elements: SceneElement[] = []
   links.forEach((link, index) => { const from = nodes.get(link.from); const to = nodes.get(link.to); if (!from || !to) fail('连线引用了未声明的 block 节点。', link.line); elements.push(diagramEdge(`block-edge-${index}`, { nodeId: from.id, x: from.x + from.width / 2, y: from.y + from.height / 2 }, { nodeId: to.id, x: to.x + to.width / 2, y: to.y + to.height / 2 }, link.label, { arrow: link.arrow, route: 'orthogonal' })) })
-  elements.push(...nodes.values()); return finishDiagram('block', elements, warnings)
+  links.forEach((link, index) => sources.add(link.line, `block-edge-${index}`))
+  elements.push(...nodes.values()); return finishDiagram('block', elements, warnings, sources)
 }
 
 interface PacketField { start: number; end: number; text: string; line: number }
 function packet(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const fields: PacketField[] = []; let title = ''; let next = 0
   for (const entry of lines.slice(1)) {
     const raw = content(entry).trim(); if (!raw) continue; rejectDirective(raw, entry.line)
-    if (/^title\s+/.test(raw)) { if (title || fields.length) fail('标题只能在数据字段之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); continue }
+    if (/^title\s+/.test(raw)) { if (title || fields.length) fail('标题只能在数据字段之前声明一次。', entry.line); title = label(raw.slice(6), entry.line); sources.add(entry.line, 'packet-title'); continue }
     const match = raw.match(/^(?:(\d+)(?:\s*-\s*(\d+))?|\+(\d+))\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$/)
     if (!match) fail('数据字段需要 0-15: "标签"、16: "标签" 或 +8: "标签"。', entry.line)
     const start = match[3] ? next : Number(match[1]); const end = match[3] ? start + Number(match[3]) - 1 : Number(match[2] ?? match[1])
@@ -359,12 +384,14 @@ function packet(lines: SourceLine[]): DiagramResult {
     for (let bit = 0; bit < 32; bit++) elements.push(diagramText(`packet-bit-${row}-${bit}`, `${bit}`, left + bit * bitWidth, y, bitWidth, 24, { fontSize: 10 }))
   }
   fields.forEach((field, index) => {
+    const firstElement = elements.length
     for (let row = Math.floor(field.start / 32); row <= Math.floor(field.end / 32); row++) {
       const start = Math.max(field.start, row * 32); const end = Math.min(field.end, row * 32 + 31); const width = (end - start + 1) * bitWidth
       elements.push(diagramNode(`packet-field-${index}-${row}`, field.text, left + (start % 32) * bitWidth, top + row * 110 + 28, width, 64, 'rectangle', { fill: COLORS[index % COLORS.length]!, stroke: INKS[index % INKS.length]!, strokeWidth: 1, fontSize: width < 78 ? 10 : 14 }))
     }
+    sources.capture(field.line, elements, firstElement)
   })
-  return finishDiagram('packet', elements)
+  return finishDiagram('packet', elements, [], sources)
 }
 
 /** A bounded, native scene compiler; unsupported directives fail with a source line. */

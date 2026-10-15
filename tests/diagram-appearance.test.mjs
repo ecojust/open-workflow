@@ -138,9 +138,9 @@ test('compiled SVG and compatible exports share the selected style while source/
   assert.equal(scene.background, DIAGRAM_STYLES.find(style => style.id === 'midnight').background)
   const decode = result => new TextDecoder().decode(result.bytes)
   assert.equal(decode(await exportDocument(doc, 'svg')), sceneToSvg(scene))
-  const drawio = importGraphXml(decode(await exportDocument(doc, 'drawio')))[0].scene
-  const excalidraw = importBoardJson(decode(await exportDocument(doc, 'excalidraw'))).scene
-  for (const imported of [drawio, excalidraw]) {
+  const graphXml = importGraphXml(decode(await exportDocument(doc, 'drawio')))[0].scene
+  const boardJson = importBoardJson(decode(await exportDocument(doc, 'excalidraw'))).scene
+  for (const imported of [graphXml, boardJson]) {
     assert.equal(imported.background, scene.background)
     assert.deepEqual(imported.elements.filter(element => element.type === 'shape').map(element => element.style.fill), scene.elements.filter(element => element.type === 'shape').map(element => element.style.fill))
   }

@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import BoardTemplatePanel from './BoardTemplatePanel.vue'
+import BrushPanel, { type BrushSettings } from './BrushPanel.vue'
+import { BRUSH_PRESETS, brushPreset, normalizedPressure } from '../core/brushes'
 import { createBoardTemplate } from '../core/board-templates'
 import CanvasContextMenu from './CanvasContextMenu.vue'
 import { canvasGrid } from '../core/grid'
@@ -9,7 +11,7 @@ import { applyGlobalLineStyle, sceneDefaultStyle, resolveStrokePattern } from '.
 import { findBindingTarget } from '../core/binding'
 import { expandedSelection, groupElements, ungroupElements, alignElements, distributeElements, hitTestElement, frameContents } from '../core/board-tools'
 import { selectionScene, reorderElements } from '../core/selection'
-import { clone, newId, type EdgeElement, type ElementStyle, type Point, type Scene, type SceneElement, type ShapeElement } from '../core/types'
+import { clone, newId, type EdgeElement, type ElementStyle, type Point, type Scene, type SceneElement, type ShapeElement, type BrushKind, type StrokeElement } from '../core/types'
 import { braceTextBounds, isBraceShape, center, combineBounds, edgePoints, elementBounds, pathMidpoint, sceneBounds, shapeAnchor, snap, type Bounds } from '../core/geometry'
 import { elementToSvg, safeImageData } from '../core/svg'
 import { layoutScene } from '../core/layout'
@@ -17,12 +19,19 @@ import { createDocument, validateScene } from '../core/documents'
 
 const props = defineProps<{ scene: Scene; mode: 'flow' | 'board'; theme: 'light' | 'dark' }>()
 const emit = defineEmits<{ change: [scene: Scene, label: string]; status: [message: string]; export: [format: 'svg' | 'png', selection?: Scene] }>()
-type Tool = 'select' | 'hand' | ShapeElement['shape'] | 'pen' | 'highlighter' | 'eraser' | 'edge'
+type Tool = 'select' | 'hand' | ShapeElement['shape'] | 'pen' | 'highlighter' | 'eraser' | 'edge' | 'laser'
 const draft = ref<Scene>(clone(props.scene)), selected = ref<string[]>([]), tool = ref<Tool>('select')
 const stage = ref<HTMLDivElement>(), editor = ref<HTMLElement>(), imageInput = ref<HTMLInputElement>(), textInput = ref<HTMLTextAreaElement>(), propertyTextInput = ref<HTMLTextAreaElement>()
 const viewport = ref({ x: 0, y: 0, zoom: 1, width: 900, height: 600 }), spaceHeld = ref(false), editingId = ref<string>(), editText = ref('')
 const propertiesOpen = ref(typeof window === 'undefined' || window.innerWidth > 1000), activeStyle = ref<ElementStyle>(sceneDefaultStyle(props.scene)), snapEnabled = ref(false)
-const boardTemplatesOpen = ref(false)
+const boardTemplatesOpen = ref(false), brushSettingsOpen = ref(false)
+const firstBrush = brushPreset('pen')
+const brushSettings = ref<BrushSettings>({ kind: 'pen', color: activeStyle.value.stroke, width: firstBrush.width, opacity: firstBrush.opacity, smoothing: .4, pressure: true })
+const rememberedBrushes = new Map<BrushKind, BrushSettings>()
+let lastInkBrush: BrushKind = 'pen'
+const laserTrails = ref<{ id: string; points: Point[]; updatedAt: number; opacity: number }[]>([])
+let laserFrame: number | undefined
+const brushName = computed(() => brushPreset(brushSettings.value.kind).label)
 const toolLocked = ref(false), edgeDefaultsOpen = ref(false)
 const defaultEdgeRoute = ref<EdgeElement['route']>('orthogonal'), defaultEdgeArrow = ref<EdgeElement['arrow']>('end')
 const edgeRouteOptions = [{ value: 'straight', label: '直线', icon: 'edge-straight' }, { value: 'orthogonal', label: '折线', icon: 'edge-orthogonal' }] as const
@@ -39,12 +48,14 @@ const globalStyle = computed(() => sceneDefaultStyle(draft.value))
 let flushing = false, captureTarget: Element | undefined
 const pendingControls = new WeakSet<Element>()
 let observer: ResizeObserver | undefined, clipboard: SceneElement[] = [], initialFit = false, activePointerId: number | undefined, penPointBudget = 0
-let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'endpoint' | 'resize' | 'marquee' | 'erase'; movingIds?: string[]; endpoint?: 'from' | 'to'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
+let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'endpoint' | 'resize' | 'marquee' | 'erase' | 'laser'; movingIds?: string[]; endpoint?: 'from' | 'to'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
 const marquee = ref<Bounds>()
 const noteColors = ['#fff4ad', '#ffd7dc', '#d8f4df', '#dceafe', '#eadfff', '#ffffff']
 const alignmentOptions = [{ id: 'left', label: '左对齐' }, { id: 'center', label: '水平居中' }, { id: 'right', label: '右对齐' }, { id: 'top', label: '顶端对齐' }, { id: 'middle', label: '垂直居中' }, { id: 'bottom', label: '底端对齐' }] as const
 watch(() => props.scene, value => { if (!gesture && !editingId.value) { draft.value = clone(value); activeStyle.value = sceneDefaultStyle(value); selected.value = selected.value.filter(id => value.elements.some(e => e.id === id)) } }, { deep: true })
 const selectedElements = computed(() => draft.value.elements.filter(e => selected.value.includes(e.id)))
+const hasBrushSelection = computed(() => selectedElements.value.some(element => element.type === 'stroke' && element.brush))
+const hasLineStyleSelection = computed(() => selectedElements.value.some(element => element.type !== 'stroke' || !element.brush))
 const primary = computed(() => selectedElements.value.length === 1 ? selectedElements.value[0] : undefined)
 const selectedBounds = computed(() => selectedElements.value.length ? combineBounds(selectedElements.value.map(e => e.type === 'edge' ? elementBounds({ ...e, type: 'stroke', points: edgePoints(e, draft.value) }) : elementBounds(e))) : undefined)
 const editingNode = computed(() => draft.value.elements.find((e): e is ShapeElement | EdgeElement => e.id === editingId.value && (e.type === 'shape' || e.type === 'edge')))
@@ -64,7 +75,7 @@ const tools: { id: Tool; label: string; icon: string; shortcut?: string }[] = [
   { id: 'select', label: '选择', icon: 'cursor', shortcut: 'V' }, { id: 'hand', label: '移动画布', icon: 'hand', shortcut: 'H' },
   { id: 'rectangle', label: '矩形', icon: 'rectangle', shortcut: 'R' }, { id: 'ellipse', label: '圆形', icon: 'ellipse', shortcut: 'O' },
   { id: 'diamond', label: '判断', icon: 'diamond', shortcut: 'D' }, { id: 'edge', label: '连线', icon: 'connector', shortcut: 'L' },
-  { id: 'text', label: '文字', icon: 'text', shortcut: 'T' }, { id: 'note', label: '便签', icon: 'note', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: 'pen', shortcut: 'P' }, { id: 'highlighter', label: '荧光笔', icon: 'highlighter', shortcut: 'M' }, { id: 'eraser', label: '橡皮擦', icon: 'eraser', shortcut: 'E' }, { id: 'frame', label: '分区框架', icon: 'frame', shortcut: 'F' },
+  { id: 'text', label: '文字', icon: 'text', shortcut: 'T' }, { id: 'note', label: '便签', icon: 'note', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: 'pen', shortcut: 'P' }, { id: 'highlighter', label: '荧光笔', icon: 'highlighter', shortcut: 'M' }, { id: 'laser', label: '激光指示', icon: 'laser', shortcut: 'K' }, { id: 'eraser', label: '橡皮擦', icon: 'eraser', shortcut: 'E' }, { id: 'frame', label: '分区框架', icon: 'frame', shortcut: 'F' },
 ]
 const shapePalette: { shape: ShapeElement['shape']; text: string; icon: string }[] = [
   { shape: 'rectangle', text: '矩形', icon: 'rectangle' }, { shape: 'ellipse', text: '椭圆', icon: 'ellipse' }, { shape: 'diamond', text: '菱形', icon: 'diamond' },
@@ -94,10 +105,48 @@ function releaseCapture() { if (activePointerId !== undefined && captureTarget?.
 function localPoint(event: MouseEvent | PointerEvent | WheelEvent): Point { const rect = stage.value!.getBoundingClientRect(), v = viewport.value; return { x: v.x + (event.clientX - rect.left) / v.zoom, y: v.y + (event.clientY - rect.top) / v.zoom } }
 function snapped(point: Point): Point { return { x: snap(point.x, snapEnabled.value), y: snap(point.y, snapEnabled.value) } }
 function focusStage() { nextTick(() => stage.value?.focus({ preventScroll: true })) }
-function setTool(value: Tool) { flush(); bindingTarget.value = undefined; contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; tool.value = value; if (window.innerWidth <= 800) libraryOpen.value = false; focusStage() }
+function setTool(value: Tool) {
+  flush(); bindingTarget.value = undefined; contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; brushSettingsOpen.value = false
+  if (value === 'highlighter') chooseBrush('highlighter', false)
+  else if (value === 'pen' && brushSettings.value.kind === 'highlighter') chooseBrush(lastInkBrush, false)
+  tool.value = value
+  if (window.innerWidth <= 800) libraryOpen.value = false
+  focusStage()
+}
+function chooseBrush(kind: BrushKind, activate = true) {
+  flush()
+  rememberedBrushes.set(brushSettings.value.kind, { ...brushSettings.value })
+  const preset = brushPreset(kind)
+  brushSettings.value = rememberedBrushes.get(kind) || { ...brushSettings.value, kind, width: preset.width, opacity: preset.opacity, color: preset.color || (brushSettings.value.kind === 'highlighter' ? activeStyle.value.stroke : brushSettings.value.color) }
+  if (kind !== 'highlighter') lastInkBrush = kind
+  if (activate) tool.value = kind === 'highlighter' ? 'highlighter' : 'pen'
+}
+function toggleBrushSettings() {
+  flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; contextMenu.value = undefined
+  brushSettingsOpen.value = !brushSettingsOpen.value
+  if (brushSettingsOpen.value) nextTick(() => editor.value?.querySelector<HTMLButtonElement>('[data-testid="brush-settings-panel"] button[aria-pressed="true"]')?.focus({ preventScroll: true }))
+  else focusStage()
+}
+function updateBrushSettings(patch: Partial<BrushSettings>) { brushSettings.value = { ...brushSettings.value, ...patch } }
+function updateSelectedBrush(value: string) {
+  if (!BRUSH_PRESETS.some(preset => preset.id === value)) return
+  const stroke = primary.value
+  if (stroke?.type !== 'stroke' || stroke.locked) return
+  stroke.brush = value as BrushKind
+  stroke.pressures ||= stroke.points.map(() => .5)
+  commit('修改笔触')
+}
+function pointerPressure(event: PointerEvent, fallback = .5) { return brushSettings.value.pressure && event.pointerType === 'pen' ? normalizedPressure(event.pressure > 0 ? event.pressure : fallback) : .5 }
+function advanceLaser() {
+  const now = performance.now(), activeId = gesture?.type === 'laser' ? gesture.id : undefined
+  laserTrails.value = laserTrails.value.filter(trail => trail.id === activeId || now - trail.updatedAt < 900)
+  for (const trail of laserTrails.value) trail.opacity = trail.id === activeId ? 1 : Math.max(0, 1 - (now - trail.updatedAt) / 900)
+  laserFrame = laserTrails.value.length ? requestAnimationFrame(advanceLaser) : undefined
+}
+function laserPath(points: Point[]) { return points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ') }
 function toggleToolLock() { flush(); toolLocked.value = !toolLocked.value; emit('status', toolLocked.value ? '连续绘制已开启，按 Esc 返回选择工具' : '连续绘制已关闭，绘制完成后返回选择工具'); focusStage() }
 function toggleEdgeDefaults() {
-  flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; contextMenu.value = undefined
+  flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; brushSettingsOpen.value = false; contextMenu.value = undefined
   edgeDefaultsOpen.value = !edgeDefaultsOpen.value
   if (edgeDefaultsOpen.value) nextTick(() => editor.value?.querySelector<HTMLButtonElement>('[data-testid="edge-defaults-panel"] button[aria-pressed="true"]')?.focus({ preventScroll: true }))
   else focusStage()
@@ -126,7 +175,7 @@ function elementMarkup(element: SceneElement) {
   if (element.id !== editingId.value) return elementToSvg(element, draft.value, true)
   return elementToSvg(element.type === 'shape' ? { ...element, text: '' } : element.type === 'edge' ? { ...element, label: '' } : element, draft.value, true)
 }
-function markControlDirty(event: Event) { const control = event.target; if ((control instanceof HTMLInputElement || control instanceof HTMLSelectElement) && control.closest('.properties-panel,.global-style-panel')) pendingControls.add(control) }
+function markControlDirty(event: Event) { const control = event.target; if ((control instanceof HTMLInputElement || control instanceof HTMLSelectElement) && control.closest('.properties-panel,.global-style-panel,.brush-panel')) pendingControls.add(control) }
 function clearControlDirty(event: Event) { if (event.target instanceof Element) pendingControls.delete(event.target) }
 function flush() {
   if (flushing) return
@@ -148,11 +197,17 @@ defineExpose({ flush, fitCanvas })
 function pointerDown(event: PointerEvent, element?: SceneElement, resize = false) {
   if (event.button !== 0 && event.button !== 1) return
   if (event.target instanceof Element && event.target.closest('.inline-text-editor')) return
-  flush(); contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; event.preventDefault(); event.stopPropagation(); stage.value?.focus({ preventScroll: true })
+  flush(); contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; brushSettingsOpen.value = false; event.preventDefault(); event.stopPropagation(); stage.value?.focus({ preventScroll: true })
   captureTarget = event.currentTarget instanceof Element ? event.currentTarget : stage.value; captureTarget?.setPointerCapture(event.pointerId)
   activePointerId = event.pointerId
   const point = localPoint(event), original = clone(draft.value)
   if (spaceHeld.value || event.button === 1 || tool.value === 'hand') { gesture = { type: 'pan', start: { x: event.clientX, y: event.clientY }, last: point, original, originalView: { x: viewport.value.x, y: viewport.value.y } }; return }
+  if (tool.value === 'laser') {
+    const id = newId('laser'); laserTrails.value = [...laserTrails.value.slice(-11), { id, points: [point], updatedAt: performance.now(), opacity: 1 }]
+    selected.value = []; gesture = { type: 'laser', start: point, last: point, original, id }
+    if (laserFrame === undefined) laserFrame = requestAnimationFrame(advanceLaser)
+    return
+  }
   if (resize && element?.type === 'shape' && !element.locked) { gesture = { type: 'resize', start: point, last: point, original, id: element.id }; return }
   if (!['select', 'hand', 'eraser'].includes(tool.value) && !canAdd(1, ['pen', 'highlighter'].includes(tool.value) ? 1 : 0)) { releaseCapture(); return }
   if (tool.value === 'eraser') {
@@ -164,7 +219,12 @@ function pointerDown(event: PointerEvent, element?: SceneElement, resize = false
     const edge: EdgeElement = { id: newId(), type: 'edge', from, to: { ...point }, label: '', arrow: defaultEdgeArrow.value, route: defaultEdgeRoute.value, style: { ...activeStyle.value, fill: 'none' }, locked: false }
     bindingTarget.value = node; draft.value.elements.push(edge); selected.value = [edge.id]; gesture = { type: 'edge', start: point, last: point, original, id: edge.id }; return
   }
-  if (tool.value === 'pen' || tool.value === 'highlighter') { const id = newId(); penPointBudget = 100000 - draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0) - 1; draft.value.elements.push({ id, type: 'stroke', points: [point], style: { ...activeStyle.value, fill: 'none', ...(tool.value === 'highlighter' ? { stroke: '#f4cb45', strokeWidth: Math.min(100, Math.max(14, activeStyle.value.strokeWidth * 4)), opacity: .32, roughness: 'clean' as const, strokePattern: 'solid' as const, dashed: false } : {}) }, locked: false }); selected.value = [id]; gesture = { type: 'pen', start: point, last: point, original, id }; return }
+  if (tool.value === 'pen' || tool.value === 'highlighter') {
+    const id = newId(), settings = brushSettings.value
+    penPointBudget = 100000 - draft.value.elements.reduce((count, e) => count + (e.type === 'stroke' ? e.points.length : 0), 0) - 1
+    draft.value.elements.push({ id, type: 'stroke', brush: settings.kind, points: [point], pressures: [pointerPressure(event)], style: { ...activeStyle.value, fill: 'none', stroke: settings.color, strokeWidth: settings.width, opacity: settings.opacity, roughness: 'clean', strokePattern: 'solid', dashed: false }, locked: false })
+    selected.value = [id]; gesture = { type: 'pen', start: point, last: point, original, id }; return
+  }
   if (!['select', 'hand'].includes(tool.value)) {
     const node = makeShape(tool.value as ShapeElement['shape'], snapped(point)); if (node.shape === 'frame') draft.value.elements.unshift(node); else draft.value.elements.push(node); selected.value = [node.id]; gesture = { type: 'draw', start: snapped(point), last: point, original, id: node.id }; return
   }
@@ -215,6 +275,11 @@ function pointerMove(event: PointerEvent) {
   const point = localPoint(event), dx = point.x - gesture.start.x, dy = point.y - gesture.start.y
   if (Math.hypot(dx, dy) * viewport.value.zoom > 3) gesture.moved = true
   if (gesture.type === 'pan') { viewport.value.x = gesture.originalView!.x - (event.clientX - gesture.start.x) / viewport.value.zoom; viewport.value.y = gesture.originalView!.y - (event.clientY - gesture.start.y) / viewport.value.zoom; return }
+  if (gesture.type === 'laser') {
+    const trail = laserTrails.value.find(item => item.id === gesture!.id)
+    if (trail && Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y) * viewport.value.zoom > 1) { trail.points.push(point); if (trail.points.length > 1024) trail.points.shift(); trail.updatedAt = performance.now(); gesture.last = point }
+    return
+  }
   if (gesture.type === 'erase') {
     const distance = Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y), steps = Math.min(128, Math.max(1, Math.ceil(distance * viewport.value.zoom / 6)))
     for (let index = 1; index <= steps; index++) eraseAt({ x: gesture.last.x + (point.x - gesture.last.x) * index / steps, y: gesture.last.y + (point.y - gesture.last.y) * index / steps })
@@ -235,11 +300,24 @@ function pointerMove(event: PointerEvent) {
     }
     if (gesture.type === 'draw' && gesture.moved) { node.x = Math.min(gesture.start.x, p.x); node.y = Math.min(gesture.start.y, p.y); node.width = Math.max(24, Math.abs(p.x - gesture.start.x)); node.height = Math.max(24, Math.abs(p.y - gesture.start.y)) }
     if (gesture.type === 'resize') { node.width = Math.max(24, p.x - node.x); node.height = Math.max(24, p.y - node.y); if (event.shiftKey) { const old = gesture.original.elements.find(e => e.id === node.id) as ShapeElement; node.height = node.width * old.height / old.width } }
-  } else if (gesture.type === 'pen') { const stroke = draft.value.elements.find(e => e.id === gesture!.id); if (stroke?.type === 'stroke' && Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y) * viewport.value.zoom > 1.5) { if (!penPointBudget) { finishGesture(false); emit('status', '已达到 100000 个笔迹点，本次笔迹已保存'); return }; stroke.points.push(point); penPointBudget--; gesture.last = point } }
+  } else if (gesture.type === 'pen') {
+    const samples = event.getCoalescedEvents?.() || []
+    for (const sample of samples.length ? samples : [event]) appendPenPoint(sample)
+  }
   else if (gesture.type === 'edge' || gesture.type === 'endpoint') { const edge = draft.value.elements.find(e => e.id === gesture!.id) as EdgeElement, target = findNode(point); bindingTarget.value = target; edge[gesture.endpoint || 'to'] = target ? { ...center(target), nodeId: target.id } : snapped(point) }
   else if (gesture.type === 'marquee') marquee.value = { x: Math.min(point.x, gesture.start.x), y: Math.min(point.y, gesture.start.y), width: Math.abs(dx), height: Math.abs(dy) }
 }
-function pointerUp() { finishGesture(true) }
+function appendPenPoint(event: PointerEvent, final = false) {
+  if (gesture?.type !== 'pen') return
+  const stroke = draft.value.elements.find((element): element is StrokeElement => element.id === gesture!.id && element.type === 'stroke')
+  if (!stroke) return
+  const raw = localPoint(event), blend = final ? 1 : 1 - brushSettings.value.smoothing * .75
+  const point = { x: gesture.last.x + (raw.x - gesture.last.x) * blend, y: gesture.last.y + (raw.y - gesture.last.y) * blend }
+  if (Math.hypot(point.x - gesture.last.x, point.y - gesture.last.y) * viewport.value.zoom <= (final ? .1 : 1.5)) return
+  if (!penPointBudget) { finishGesture(false); emit('status', '已达到 100000 个笔迹点，本次笔迹已保存'); return }
+  stroke.points.push(point); stroke.pressures!.push(pointerPressure(event, stroke.pressures!.at(-1))); penPointBudget--; gesture.last = point
+}
+function pointerUp(event: PointerEvent) { if (gesture?.type === 'pen') appendPenPoint(event, true); finishGesture(true) }
 function finishGesture(openText: boolean) {
   if (!gesture) { releaseCapture(); return }
   const done = gesture; gesture = undefined; bindingTarget.value = undefined
@@ -248,6 +326,7 @@ function finishGesture(openText: boolean) {
     const box = marquee.value!; const ids = draft.value.elements.filter(e => { const b = e.type === 'edge' ? elementBounds({ ...e, type: 'stroke', points: edgePoints(e, draft.value) }) : elementBounds(e); return b.x >= box.x && b.y >= box.y && b.x + b.width <= box.x + box.width && b.y + b.height <= box.y + box.height }).map(e => e.id)
     selected.value = expandedSelection(draft.value, [...new Set([...(done.additive ? selected.value : []), ...ids])]); marquee.value = undefined; return
   }
+  if (done.type === 'laser') { const trail = laserTrails.value.find(item => item.id === done.id); if (trail) trail.updatedAt = performance.now(); return }
   if (done.type === 'pan') return
   if (done.type === 'endpoint' && !done.moved) { draft.value = done.original; return }
   if (done.type === 'edge' && !done.moved) { draft.value = done.original; selected.value = []; return }
@@ -255,7 +334,7 @@ function finishGesture(openText: boolean) {
   if (['draw', 'pen', 'edge'].includes(done.type) && !toolLocked.value) tool.value = 'select'
   if (done.type === 'draw' && !toolLocked.value) { const added = draft.value.elements.find(e => e.id === done.id); if (openText && added?.type === 'shape' && ['text', 'note'].includes(added.shape)) startEdit(added) }
 }
-function cancelGesture() { if (gesture) draft.value = gesture.original; gesture = undefined; marquee.value = undefined; bindingTarget.value = undefined; releaseCapture() }
+function cancelGesture() { if (gesture?.type === 'laser') laserTrails.value = laserTrails.value.filter(trail => trail.id !== gesture!.id); else if (gesture) draft.value = gesture.original; gesture = undefined; marquee.value = undefined; bindingTarget.value = undefined; releaseCapture() }
 function fitCanvas() {
   if (!stage.value) return
   if (!draft.value.elements.length) { viewport.value.zoom = 1; viewport.value.x = 0; viewport.value.y = 0; return }
@@ -316,7 +395,7 @@ function updateGlobalStyle(key: 'roughness' | 'strokePattern' | 'strokeWidth' | 
 }
 function reorder(operation: 'front' | 'back' | 'forward' | 'backward') { flush(); draft.value = reorderElements(draft.value, selected.value, operation); commit(({ front: '移到顶层', back: '移到底层', forward: '上移一层', backward: '下移一层' })[operation]) }
 function openContextMenu(event: MouseEvent) {
-  event.preventDefault(); flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; bindingTarget.value = undefined
+  event.preventDefault(); flush(); globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; brushSettingsOpen.value = false; bindingTarget.value = undefined
   const target = event.target instanceof Element ? event.target.closest('[data-element-id]')?.getAttribute('data-element-id') : undefined
   if (target && !selected.value.includes(target)) selected.value = expandedSelection(draft.value, [target])
   if (!target && !(event.shiftKey)) selected.value = []
@@ -342,7 +421,7 @@ function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | '
 function distributeSelection(axis: 'horizontal' | 'vertical') { flush(); draft.value = distributeElements(draft.value, selected.value, axis); commit('均匀分布元素'); focusStage() }
 function toggleLock() { const lock = !selectedElements.value.every(e => e.locked); for (const e of selectedElements.value) e.locked = lock; commit(lock ? '锁定图形' : '解锁图形') }
 function toggleGrid() { flush(); draft.value.grid = !draft.value.grid; commit('切换网格') }
-function autoLayout() { flush(); edgeDefaultsOpen.value = false; globalStyleOpen.value = false; boardTemplatesOpen.value = false; draft.value = layoutScene(draft.value); commit('自动布局'); nextTick(fitCanvas) }
+function autoLayout() { flush(); edgeDefaultsOpen.value = false; brushSettingsOpen.value = false; globalStyleOpen.value = false; boardTemplatesOpen.value = false; draft.value = layoutScene(draft.value); commit('自动布局'); nextTick(fitCanvas) }
 async function importImage(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''; if (!file) return; flush(); if (!canAdd()) return
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) { emit('status', '请选择 10 MB 以内的 PNG、JPEG 或 WebP 图片'); return }
@@ -353,7 +432,7 @@ function keyDown(event: KeyboardEvent) {
   const command = event.ctrlKey || event.metaKey
   if (command && ['z', 'y', 's'].includes(event.key.toLowerCase())) return
   if (event.code === 'Space') { event.preventDefault(); spaceHeld.value = true; return }
-  if (event.key === 'Escape') { contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; cancelGesture(); selected.value = []; tool.value = 'select'; toolLocked.value = false; return }
+  if (event.key === 'Escape') { contextMenu.value = undefined; globalStyleOpen.value = false; boardTemplatesOpen.value = false; edgeDefaultsOpen.value = false; brushSettingsOpen.value = false; laserTrails.value = []; cancelGesture(); selected.value = []; tool.value = 'select'; toolLocked.value = false; return }
   if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return }
   if (command && event.key.toLowerCase() === 'a') { event.preventDefault(); selected.value = draft.value.elements.map(e => e.id); return }
   if (command && event.key.toLowerCase() === 'c') { event.preventDefault(); copySelected(); return }
@@ -369,26 +448,28 @@ function keyDown(event: KeyboardEvent) {
 function releaseSpace(event: KeyboardEvent) { if (event.code === 'Space') spaceHeld.value = false }
 function windowBlur() { spaceHeld.value = false; finishGesture(false) }
 onMounted(() => { observer = new ResizeObserver(entries => { const rect = entries[0]?.contentRect; if (!rect) return; viewport.value.width = rect.width; viewport.value.height = rect.height; if (!initialFit && rect.width && rect.height) { initialFit = true; fitCanvas() } }); if (stage.value) observer.observe(stage.value); window.addEventListener('keyup', releaseSpace); window.addEventListener('blur', windowBlur); focusStage() })
-onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeEventListener('keyup', releaseSpace); window.removeEventListener('blur', windowBlur) })
+onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laserFrame); releaseCapture(); observer?.disconnect(); window.removeEventListener('keyup', releaseSpace); window.removeEventListener('blur', windowBlur) })
 </script>
 
 <template>
   <section ref="editor" class="scene-editor" @keydown="keyDown" @input.capture="markControlDirty" @change.capture="clearControlDirty" data-testid="scene-editor">
     <div class="canvas-commandbar" @pointerdown.stop>
       <div class="toolset" role="toolbar" aria-label="画布工具">
-        <button aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="edgeDefaultsOpen = false; libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
+        <button aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="edgeDefaultsOpen = false; brushSettingsOpen = false; libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
         <button v-for="item in tools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
         <span class="tool-divider" />
         <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()"><AppIcon name="image" :size="20" /></button>
       </div>
       <div class="commandbar-actions">
+        <button class="brush-settings-toggle" aria-label="笔触设置" :title="`笔触设置 · ${brushName}`" :aria-expanded="brushSettingsOpen" data-testid="brush-settings-toggle" @click="toggleBrushSettings"><AppIcon name="brushes" /></button>
         <button class="tool-lock-toggle" aria-label="连续绘制" :title="toolLocked ? '连续绘制已开启 · Esc 返回选择' : '开启连续绘制'" :aria-pressed="toolLocked" data-testid="tool-lock" @click="toggleToolLock"><AppIcon :name="toolLocked ? 'lock' : 'unlock'" /></button>
         <button aria-label="新建连线设置" :title="`新建连线 · ${defaultEdgeRoute === 'straight' ? '直线' : '折线'} · ${defaultEdgeArrow === 'none' ? '无箭头' : defaultEdgeArrow === 'both' ? '双箭头' : '单箭头'}`" :aria-expanded="edgeDefaultsOpen" data-testid="edge-defaults-toggle" @click="toggleEdgeDefaults"><AppIcon :name="defaultEdgeRoute === 'straight' ? 'edge-straight' : 'edge-orthogonal'" /></button>
-        <button aria-label="画布模板" title="画布模板" :aria-expanded="boardTemplatesOpen" @click="flush(); globalStyleOpen = false; edgeDefaultsOpen = false; boardTemplatesOpen = !boardTemplatesOpen" data-testid="board-template-toggle"><AppIcon name="templates" /></button>
-        <button class="style-trigger" aria-label="全局线条风格" :title="`全局线条风格 · ${globalStyle.roughness === 'sketch' ? '手绘' : '整洁'}`" :aria-expanded="globalStyleOpen" @click="flush(); boardTemplatesOpen = false; edgeDefaultsOpen = false; globalStyleOpen = !globalStyleOpen" data-testid="global-style-toggle"><AppIcon name="style" /><span class="style-trigger-label">全局线条<small>{{ globalStyle.roughness === 'sketch' ? '手绘' : '整洁' }}</small></span><AppIcon class="style-trigger-chevron" name="chevron" :size="12" /></button>
+        <button aria-label="画布模板" title="画布模板" :aria-expanded="boardTemplatesOpen" @click="flush(); globalStyleOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; boardTemplatesOpen = !boardTemplatesOpen" data-testid="board-template-toggle"><AppIcon name="templates" /></button>
+        <button class="style-trigger" aria-label="全局线条风格" :title="`全局线条风格 · ${globalStyle.roughness === 'sketch' ? '手绘' : '整洁'}`" :aria-expanded="globalStyleOpen" @click="flush(); boardTemplatesOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; globalStyleOpen = !globalStyleOpen" data-testid="global-style-toggle"><AppIcon name="style" /><span class="style-trigger-label">全局线条<small>{{ globalStyle.roughness === 'sketch' ? '手绘' : '整洁' }}</small></span><AppIcon class="style-trigger-chevron" name="chevron" :size="12" /></button>
         <button class="layout-trigger" @click="autoLayout" title="自动布局" aria-label="自动布局" data-testid="canvas-auto-layout"><AppIcon name="auto-layout" /><span>自动布局</span></button>
         <button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板"><AppIcon name="sliders" /></button>
       </div>
+      <div v-if="brushSettingsOpen" class="brush-settings-popover"><BrushPanel :settings="brushSettings" @choose="chooseBrush" @change="updateBrushSettings" @close="brushSettingsOpen = false; focusStage()" @start="setTool(brushSettings.kind === 'highlighter' ? 'highlighter' : 'pen')" /></div>
       <div v-if="edgeDefaultsOpen" class="edge-defaults-panel" role="region" aria-label="新建连线设置" data-testid="edge-defaults-panel" @keydown.escape.stop="edgeDefaultsOpen = false; focusStage()">
         <div class="panel-heading">新建连线<button aria-label="关闭新建连线设置" @click="edgeDefaultsOpen = false; focusStage()"><AppIcon name="close" :size="15" /></button></div>
         <div class="edge-default-group" role="group" aria-label="新建连线路径"><span>路径</span><div><button v-for="option in edgeRouteOptions" :key="option.value" :aria-pressed="defaultEdgeRoute === option.value" :data-testid="`default-route-${option.value}`" @click="defaultEdgeRoute = option.value"><AppIcon :name="option.icon" :size="21"/><small>{{ option.label }}</small></button></div></div>
@@ -402,7 +483,7 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
         <div class="property-row"><label for="global-pattern">线型</label><select id="global-pattern" :value="resolveStrokePattern(globalStyle)" @change="updateGlobalStyle('strokePattern', ($event.target as HTMLSelectElement).value)"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></div>
         <div class="property-row"><label for="global-width">线宽</label><input id="global-width" type="number" min="0" max="100" :value="globalStyle.strokeWidth" @change="updateGlobalStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div>
         <div class="property-row"><label for="global-stroke">线条颜色</label><input id="global-stroke" type="color" :value="globalStyle.stroke" @change="updateGlobalStyle('stroke', ($event.target as HTMLInputElement).value)" /></div>
-        <p class="global-style-hint">应用到整张画布，并用于新建图形。<br />选中图形后，可单独调整样式。</p>
+        <p class="global-style-hint">应用到整张画布，并用于新建图形和连线。<br />已有笔迹可统一粗细和颜色，保留笔尖效果；彩虹笔保持多色。新笔迹使用笔触面板的设置。</p>
       </div>
       <input ref="imageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="importImage" />
     </div>
@@ -416,21 +497,23 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
           <g v-if="bindingTarget" class="binding-preview" pointer-events="none" :data-binding-target="bindingTarget.id" data-testid="binding-preview"><rect :x="bindingTarget.x - 5 / viewport.zoom" :y="bindingTarget.y - 5 / viewport.zoom" :width="bindingTarget.width + 10 / viewport.zoom" :height="bindingTarget.height + 10 / viewport.zoom" :rx="8 / viewport.zoom" fill="#7c6aee10" stroke="#7c6aee" :stroke-width="2 / viewport.zoom" /><circle v-for="(point, index) in bindingAnchors" :key="index" :cx="point.x" :cy="point.y" :r="3.5 / viewport.zoom" fill="#ffffff" stroke="#7c6aee" :stroke-width="1.5 / viewport.zoom" /></g>
           <g v-if="selectedBounds" class="selection-overlay" pointer-events="none"><rect :x="selectedBounds.x - 5 / viewport.zoom" :y="selectedBounds.y - 5 / viewport.zoom" :width="selectedBounds.width + 10 / viewport.zoom" :height="selectedBounds.height + 10 / viewport.zoom" fill="none" stroke="#7c6aee" :stroke-width="1.5 / viewport.zoom" :stroke-dasharray="selectedElements.length > 1 ? '6 4' : undefined" /><rect v-if="tool === 'select' && primary?.type === 'shape' && !primary.locked" :x="primary.x + primary.width - 5 / viewport.zoom" :y="primary.y + primary.height - 5 / viewport.zoom" :width="10 / viewport.zoom" :height="10 / viewport.zoom" fill="#ffffff" stroke="#7c6aee" :stroke-width="1.5 / viewport.zoom" pointer-events="all" class="resize-handle" data-testid="resize-handle" @pointerdown.stop="pointerDown($event, primary, true)" /></g>
           <g v-if="edgeHandles.length" class="edge-handles"><circle v-for="handle in edgeHandles" :key="handle.endpoint" :cx="handle.x" :cy="handle.y" :r="6 / viewport.zoom" :stroke-width="2 / viewport.zoom" fill="#fff" stroke="#7c6aee" :data-testid="`edge-handle-${handle.endpoint}`" @pointerdown.stop="startEndpointDrag($event, handle.endpoint)" /></g>
+          <g v-for="trail in laserTrails" :key="trail.id" data-testid="laser-trail" :opacity="trail.opacity" pointer-events="none" class="laser-trail"><path :d="laserPath(trail.points)" fill="none" stroke="#ff4d65" :stroke-width="4 / viewport.zoom" stroke-linecap="round" stroke-linejoin="round" /><circle v-if="trail.points.length" :cx="trail.points[trail.points.length - 1]!.x" :cy="trail.points[trail.points.length - 1]!.y" :r="5 / viewport.zoom" fill="#ff4d65" /><circle v-if="trail.points.length" :cx="trail.points[trail.points.length - 1]!.x" :cy="trail.points[trail.points.length - 1]!.y" :r="2 / viewport.zoom" fill="#fff" /></g>
           <rect v-if="marquee" v-bind="marquee" fill="#7c6aee18" stroke="#7c6aee" :stroke-width="1 / viewport.zoom" pointer-events="none" />
         </svg>
         <textarea v-if="editingNode" ref="textInput" v-model="editText" maxlength="100000" class="inline-text-editor" :style="editPosition" :aria-label="editingNode.type === 'edge' ? '编辑连线文字' : '编辑图形文字'" @blur="flush" @keydown.escape.stop="editingId = undefined; focusStage()" @keydown.enter.ctrl.prevent="flush(); focusStage()" @keydown.enter.meta.prevent="flush(); focusStage()" @pointerdown.stop />
         <div v-if="!draft.elements.length" class="empty-canvas"><div class="empty-canvas-icon"><AppIcon name="canvas" :size="32" /></div><strong>让想法，在画布上展开</strong><span>画流程、写便签，或从画布模板开始</span><small>拖动箭头自动吸附 · 右键调整图层、导出</small></div>
-        <div class="canvas-bottom" @pointerdown.stop><div class="canvas-hint">{{ selected.length ? `已选 ${selected.length} 个元素${selectedElements.some(e => e.locked) ? ' · 包含锁定元素' : ''}` : tool === 'edge' ? bindingTarget ? '松开即可连接 · 图形移动后连线自动跟随' : '拖到图形附近即可吸附 · 拖动端点可重新连接' : '双击图形写字 · 右键图层与导出 · 空格拖动' }}</div><div class="zoom-controls"><button class="grid-toggle" aria-label="点阵网格" :title="draft.grid ? '隐藏点阵网格' : '显示点阵网格'" :aria-pressed="draft.grid" data-testid="canvas-grid-toggle" @click.stop="toggleGrid"><AppIcon name="grid-dots" :size="18" /></button><span /><button aria-label="缩小" @click.stop="zoomTo(viewport.zoom / 1.2)"><AppIcon name="minus" :size="16" /></button><button class="zoom-value" title="重置为 100%" @click.stop="zoomTo(1)">{{ zoomLabel }}</button><button aria-label="放大" @click.stop="zoomTo(viewport.zoom * 1.2)"><AppIcon name="plus" :size="16" /></button><span /><button aria-label="适应画布" title="适应画布 (0)" @click.stop="fitCanvas"><AppIcon name="fit" :size="16" /></button></div></div>
+        <div class="canvas-bottom" @pointerdown.stop><div class="canvas-hint">{{ tool === 'laser' ? '按住拖动进行指示 · 轨迹自动消失，不保存到文档' : selected.length ? `已选 ${selected.length} 个元素${selectedElements.some(e => e.locked) ? ' · 包含锁定元素' : ''}` : tool === 'edge' ? bindingTarget ? '松开即可连接 · 图形移动后连线自动跟随' : '拖到图形附近即可吸附 · 拖动端点可重新连接' : '双击图形写字 · 右键图层与导出 · 空格拖动' }}</div><div class="zoom-controls"><button class="grid-toggle" aria-label="点阵网格" :title="draft.grid ? '隐藏点阵网格' : '显示点阵网格'" :aria-pressed="draft.grid" data-testid="canvas-grid-toggle" @click.stop="toggleGrid"><AppIcon name="grid-dots" :size="18" /></button><span /><button aria-label="缩小" @click.stop="zoomTo(viewport.zoom / 1.2)"><AppIcon name="minus" :size="16" /></button><button class="zoom-value" title="重置为 100%" @click.stop="zoomTo(1)">{{ zoomLabel }}</button><button aria-label="放大" @click.stop="zoomTo(viewport.zoom * 1.2)"><AppIcon name="plus" :size="16" /></button><span /><button aria-label="适应画布" title="适应画布 (0)" @click.stop="fitCanvas"><AppIcon name="fit" :size="16" /></button></div></div>
       </div>
       <aside v-if="propertiesOpen" class="properties-panel" aria-label="属性面板"><div class="panel-heading">{{ selected.length ? '图形属性' : '画布设置' }}<small v-if="selected.length">{{ selected.length }} 个</small><button aria-label="关闭属性面板" @click="propertiesOpen = false"><AppIcon name="close" :size="15" /></button></div>
         <template v-if="selected.length"><div v-if="primary?.type === 'shape' || primary?.type === 'edge'" class="property-section"><label :for="`element-text-${primary.id}`">{{ primary.type === 'edge' ? '连线标签' : '文字内容' }}</label><textarea ref="propertyTextInput" :id="`element-text-${primary.id}`" :value="primary.type === 'shape' ? primary.text : primary.label" :disabled="primary.locked" @change="updateText(($event.target as HTMLTextAreaElement).value)" rows="3" maxlength="100000" data-testid="property-text" /></div>
           <div v-if="primary?.type === 'shape' && primary.shape === 'note'" class="property-section"><h3>便签颜色</h3><div class="note-color-palette"><button v-for="color in noteColors" :key="color" :style="{ background: color }" :aria-label="`便签颜色 ${color}`" :aria-pressed="primary.style.fill === color" :disabled="primary.locked" @click="updateStyle('fill', color)"><AppIcon v-if="primary.style.fill === color" name="check" :size="15" /></button></div></div>
-          <div class="property-section"><h3>外观</h3><div class="property-row"><label for="element-fill">填充</label><input id="element-fill" type="color" :value="primary?.style.fill?.startsWith('#') && primary.style.fill.length === 7 ? primary.style.fill : '#ffffff'" @change="updateStyle('fill', ($event.target as HTMLInputElement).value)" /><button class="mini-button" @click="updateStyle('fill', 'none')" title="无填充">无</button></div><div class="property-row"><label for="element-stroke">线条 / 文字</label><input id="element-stroke" type="color" :value="primary?.style.stroke?.startsWith('#') && primary.style.stroke.length === 7 ? primary.style.stroke : '#334155'" @change="updateStyle('stroke', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-width">线宽</label><input id="element-width" type="number" min="0" max="100" :value="primary?.style.strokeWidth ?? 2" @change="updateStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-opacity">透明度</label><input id="element-opacity" type="number" min="0" max="1" step="0.05" :value="primary?.style.opacity ?? 1" @change="updateStyle('opacity', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-font">字号</label><input id="element-font" type="number" min="1" max="500" :value="primary?.style.fontSize ?? 16" @change="updateStyle('fontSize', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-align">对齐</label><select id="element-align" :value="primary?.style.textAlign ?? 'center'" @change="updateStyle('textAlign', ($event.target as HTMLSelectElement).value)"><option value="left">居左</option><option value="center">居中</option><option value="right">居右</option></select></div><div class="property-row"><label for="element-roughness">风格</label><select id="element-roughness" :value="primary?.style.roughness ?? 'clean'" @change="updateStyle('roughness', ($event.target as HTMLSelectElement).value)"><option value="clean">整洁</option><option value="sketch">手绘</option></select></div><div class="property-row"><label for="element-pattern">线型</label><select id="element-pattern" :value="primary ? resolveStrokePattern(primary.style) : 'solid'" @change="updateStyle('strokePattern', ($event.target as HTMLSelectElement).value)"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></div></div>
+          <div v-if="primary?.type === 'stroke'" class="property-section"><h3>笔迹</h3><div class="property-row"><label for="selected-brush">笔触类型</label><select id="selected-brush" data-testid="selected-brush" :value="primary.brush || ''" :disabled="primary.locked" @change="updateSelectedBrush(($event.target as HTMLSelectElement).value)"><option v-if="!primary.brush" value="" disabled>原始笔迹</option><option v-for="preset in BRUSH_PRESETS" :key="preset.id" :value="preset.id">{{ preset.label }}</option></select></div><p class="group-hint">只修改当前笔迹，可撤销。新笔迹的设置请使用顶部笔触面板。</p></div>
+          <div class="property-section"><h3>外观</h3><div class="property-row"><label for="element-fill">填充</label><input id="element-fill" type="color" :value="primary?.style.fill?.startsWith('#') && primary.style.fill.length === 7 ? primary.style.fill : '#ffffff'" @change="updateStyle('fill', ($event.target as HTMLInputElement).value)" /><button class="mini-button" @click="updateStyle('fill', 'none')" title="无填充">无</button></div><div class="property-row"><label for="element-stroke">线条 / 文字</label><input id="element-stroke" type="color" :disabled="primary?.type === 'stroke' && primary.brush === 'rainbow'" :value="primary?.style.stroke?.startsWith('#') && primary.style.stroke.length === 7 ? primary.style.stroke : '#334155'" @change="updateStyle('stroke', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-width">线宽</label><input id="element-width" type="number" min="0" max="100" :value="primary?.style.strokeWidth ?? 2" @change="updateStyle('strokeWidth', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-opacity">透明度</label><input id="element-opacity" type="number" min="0" max="1" step="0.05" :value="primary?.style.opacity ?? 1" @change="updateStyle('opacity', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-font">字号</label><input id="element-font" type="number" min="1" max="500" :value="primary?.style.fontSize ?? 16" @change="updateStyle('fontSize', ($event.target as HTMLInputElement).value)" /></div><div class="property-row"><label for="element-align">对齐</label><select id="element-align" :value="primary?.style.textAlign ?? 'center'" @change="updateStyle('textAlign', ($event.target as HTMLSelectElement).value)"><option value="left">居左</option><option value="center">居中</option><option value="right">居右</option></select></div><div v-if="hasLineStyleSelection" class="property-row"><label for="element-roughness">风格</label><select id="element-roughness" :value="primary?.style.roughness ?? 'clean'" @change="updateStyle('roughness', ($event.target as HTMLSelectElement).value)"><option value="clean">整洁</option><option value="sketch">手绘</option></select></div><div v-if="hasLineStyleSelection" class="property-row"><label for="element-pattern">线型</label><select id="element-pattern" :value="primary ? resolveStrokePattern(primary.style) : 'solid'" @change="updateStyle('strokePattern', ($event.target as HTMLSelectElement).value)"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></div><p v-if="hasBrushSelection && hasLineStyleSelection" class="group-hint">专用笔触保留笔尖效果，不使用风格与线型设置。</p></div>
           <div v-if="primary?.type === 'edge'" class="property-section"><h3>连接方式</h3><div class="property-row"><label for="edge-route">路径</label><select id="edge-route" :value="primary.route" @change="updateEdge('route', ($event.target as HTMLSelectElement).value)"><option value="orthogonal">直角连线</option><option value="straight">直线</option></select></div><div class="property-row"><label for="edge-arrow">箭头</label><select id="edge-arrow" :value="primary.arrow" @change="updateEdge('arrow', ($event.target as HTMLSelectElement).value)"><option value="end">单向</option><option value="both">双向</option><option value="none">无箭头</option></select></div></div>
           <div v-if="selected.length > 1 || selectedElements.some(e => e.groupId)" class="property-section"><h3>组合与整理</h3><div class="property-buttons"><button :disabled="selectedElements.filter(e => !e.locked).length < 2" @click="groupSelection()" data-testid="group-selection"><AppIcon name="group" :size="14" />组合</button><button :disabled="!selectedElements.some(e => e.groupId && !e.locked)" @click="groupSelection(true)" data-testid="ungroup-selection"><AppIcon name="ungroup" :size="14" />取消组合</button></div><div v-if="selected.length > 1" class="alignment-buttons"><button v-for="item in alignmentOptions" :key="item.id" :aria-label="item.label" :title="item.label" @click="alignSelection(item.id)" :data-testid="`align-${item.id}`"><AppIcon :name="`align-${item.id}`" :size="17" /></button><button aria-label="水平等距分布" title="水平等距分布" :disabled="selected.length < 3" @click="distributeSelection('horizontal')" data-testid="distribute-horizontal"><AppIcon name="distribute-horizontal" :size="17" /></button><button aria-label="垂直等距分布" title="垂直等距分布" :disabled="selected.length < 3" @click="distributeSelection('vertical')" data-testid="distribute-vertical"><AppIcon name="distribute-vertical" :size="17" /></button></div><p class="group-hint">点击组合整体选择 · Alt + 点击选择成员<br />Ctrl / ⌘ + G 组合，添加 Shift 取消组合</p></div>
           <div class="property-section"><h3>排列与操作</h3><div class="property-buttons"><button @click="reorder('front')">移到顶层</button><button @click="reorder('back')">移到底层</button><button @click="reorder('forward')">上移一层</button><button @click="reorder('backward')">下移一层</button><button @click="duplicateSelected">复制一份</button><button @click="toggleLock">{{ selectedElements.every(e => e.locked) ? '解锁' : '锁定' }}</button></div><button class="delete-button" @click="deleteSelected">删除所选</button></div>
         </template>
-        <div v-else class="property-section"><h3>显示</h3><label class="check-row"><input type="checkbox" :checked="draft.grid" @change="toggleGrid" />显示点阵网格</label><label class="check-row"><input type="checkbox" v-model="snapEnabled" />吸附到网格</label><div class="property-row"><label for="scene-background">背景颜色</label><input id="scene-background" type="color" :value="draft.background" @change="draft.background = ($event.target as HTMLInputElement).value; commit('修改背景')" /></div><button class="open-global-style" @click="boardTemplatesOpen = false; globalStyleOpen = true">全局线条风格<AppIcon name="style" :size="16" /></button><p class="property-tip">双击图形编辑文字，右键打开操作菜单。<br /><br />Shift + 点击：多选<br />方向键：微调位置<br />Delete：删除所选<br />Ctrl / ⌘ + D：复制</p></div>
+        <div v-else class="property-section"><h3>显示</h3><label class="check-row"><input type="checkbox" :checked="draft.grid" @change="toggleGrid" />显示点阵网格</label><label class="check-row"><input type="checkbox" v-model="snapEnabled" />吸附到网格</label><div class="property-row"><label for="scene-background">背景颜色</label><input id="scene-background" type="color" :value="draft.background" @change="draft.background = ($event.target as HTMLInputElement).value; commit('修改背景')" /></div><button class="open-global-style" @click="boardTemplatesOpen = false; brushSettingsOpen = false; globalStyleOpen = true">全局线条风格<AppIcon name="style" :size="16" /></button><p class="property-tip">双击图形编辑文字，右键打开操作菜单。<br /><br />Shift + 点击：多选<br />方向键：微调位置<br />Delete：删除所选<br />Ctrl / ⌘ + D：复制</p></div>
       </aside>
     </div>
     <CanvasContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :has-selection="!!selected.length" :can-edit-text="!!primary && !primary.locked && (primary.type === 'edge' || (primary.type === 'shape' && primary.shape !== 'image'))" :has-unlocked="selectedElements.some(e => !e.locked)" :all-locked="!!selected.length && selectedElements.every(e => e.locked)" :can-paste="!!clipboard.length" :can-group="selectedElements.filter(e => !e.locked).length > 1" :can-ungroup="selectedElements.some(e => e.groupId && !e.locked)" @action="contextAction" @close="closeContextMenu" />
@@ -458,4 +541,5 @@ onBeforeUnmount(() => { releaseCapture(); observer?.disconnect(); window.removeE
 @media(max-width:540px){.commandbar-actions .style-trigger{width:30px}.empty-canvas small{font-size:9px}}
 @media(max-width:1100px){.commandbar-actions .layout-trigger{width:33px;padding:0}.layout-trigger>span{display:none}}
 @media(max-width:540px){.canvas-commandbar{height:auto;min-height:0;flex-direction:column;align-items:stretch;gap:4px}.toolset{width:100%;min-height:34px}.commandbar-actions{justify-content:flex-end;gap:3px}.commandbar-actions .layout-trigger{width:30px}.shape-library,.properties-panel{margin-top:110px}.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 220px);overflow:auto}}
+.brush-settings-popover{position:absolute;right:0;top:calc(100% + 8px);z-index:12}.laser-trail{filter:drop-shadow(0 0 5px #ff4d6577)}
 </style>

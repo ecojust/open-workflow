@@ -1,11 +1,11 @@
 import type { ElementStyle, Point, SceneElement } from '../types.ts'
 import {
   diagramEdge, diagramNode, diagramStroke, diagramText, finishDiagram,
-  DiagramSyntaxError, sourceLines,
-  type DiagramResult, type DiagramTemplate,
+  DiagramSyntaxError, DiagramSourceMap, sourceLines,
+  type DiagramResult, type DiagramTemplate, type SourceLine,
 } from './common.ts'
 
-type Line = { text: string; line: number }
+type Line = SourceLine
 const NUMBER = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
 const COLORS = ['#6389e7', '#61b9a0', '#f0b45b', '#ad86d6', '#e78291', '#5bafca', '#bdba5a', '#bc8e70']
 const DAY = 86_400_000
@@ -50,20 +50,23 @@ function stroke(id: string, points: Point[], options: Partial<ElementStyle> = {}
 }
 
 function pie(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const header = lines[0]!
   const declaration = /^pie(?:\s+showData)?(?:\s+title\s+(.+))?$/.exec(header.text.trim())
   if (!declaration) return fail('饼图开头支持 pie 或 pie showData，可添加 title 标题。', header)
   const showData = /\bshowData\b/.test(header.text), slices: { label: string; value: number; at: Line }[] = []
   let title = declaration[1] ? text(declaration[1], header) : '占比分析', hasTitle = Boolean(declaration[1])
+  if (declaration[1]) sources.add(header.line, 'chart-title')
   const labels = new Set<string>()
   for (const at of lines.slice(1)) {
     const value = at.text.trim(), heading = value.match(/^title\s+(.+)$/)
-    if (heading) { if (hasTitle) fail('饼图只能设置一个标题。', at); title = text(heading[1]!, at); hasTitle = true; continue }
+    if (heading) { if (hasTitle) fail('饼图只能设置一个标题。', at); title = text(heading[1]!, at); sources.add(at.line, 'chart-title'); hasTitle = true; continue }
     const match = value.match(new RegExp(`^("(?:[^"\\\\]|\\\\.)*")\\s*:\\s*(${NUMBER})$`))
     if (!match) fail('饼图数据格式为 "分类名称" : 非负数；其他指令暂不支持。', at)
     const label = text(match![1]!, at), amount = number(match![2]!, at)
     if (amount < 0) fail('饼图数值不能为负数。', at)
     if (labels.has(label)) fail(`饼图分类“${label}”重复。`, at)
+    sources.add(at.line, `pie-sector-${slices.length}`, `pie-percent-${slices.length}`, `pie-key-${slices.length}`, `pie-label-${slices.length}`)
     labels.add(label); slices.push({ label, value: amount, at })
     if (slices.length > 64) fail('饼图最多支持 64 个分类。', at)
   }
@@ -87,7 +90,7 @@ function pie(lines: Line[]): DiagramResult {
     angle = finish
   })
   elements.push(diagramText('pie-total', `合计 ${labelNumber(total)}`, 100, 590, 440, 36, { fontSize: 16, stroke: '#64748b' }))
-  return finishDiagram('pie', elements)
+  return finishDiagram('pie', elements, [], sources)
 }
 
 function date(value: string, at: Line): number {
@@ -108,20 +111,21 @@ function duration(value: string, at: Line, milestone = false): number {
   return days * DAY
 }
 interface Task {
-  id: string; name: string; section: string; at: Line; flags: Set<string>; startExpr: string; finishExpr: string
+  id: string; name: string; section: string; sectionLine: number; at: Line; flags: Set<string>; startExpr: string; finishExpr: string
   previous?: Task; start?: number; end?: number; dependencies: string[]; resolving?: boolean
 }
 function gantt(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   if (lines[0]!.text.trim() !== 'gantt') return fail('甘特图开头应为 gantt。', lines[0]!)
-  let title = '项目计划', section = '', axisFormat = '%m-%d', hasTitle = false, hasDateFormat = false, hasAxisFormat = false
+  let title = '项目计划', section = '', sectionLine = 0, axisFormat = '%m-%d', hasTitle = false, hasDateFormat = false, hasAxisFormat = false
   const tasks: Task[] = [], ids = new Map<string, Task>()
   for (const at of lines.slice(1)) {
     const value = at.text.trim()
     const directive = value.match(/^(title|section|dateFormat|axisFormat)\s+(.+)$/)
     if (directive) {
       const argument = directive[2]!.trim()
-      if (directive[1] === 'title') { if (hasTitle) fail('甘特图只能设置一个标题。', at); title = text(argument, at); hasTitle = true }
-      else if (directive[1] === 'section') section = text(argument, at)
+      if (directive[1] === 'title') { if (hasTitle) fail('甘特图只能设置一个标题。', at); title = text(argument, at); sources.add(at.line, 'chart-title'); hasTitle = true }
+      else if (directive[1] === 'section') { section = text(argument, at); sectionLine = at.line }
       else if (directive[1] === 'dateFormat') { if (hasDateFormat) fail('dateFormat 不能重复。', at); if (argument !== 'YYYY-MM-DD') fail('当前甘特图仅支持 dateFormat YYYY-MM-DD。', at); hasDateFormat = true }
       else { if (hasAxisFormat) fail('axisFormat 不能重复。', at); if (!['%Y-%m-%d', '%m-%d', '%d'].includes(argument)) fail('axisFormat 目前支持 %Y-%m-%d、%m-%d 或 %d。', at); axisFormat = argument; hasAxisFormat = true }
       continue
@@ -139,7 +143,7 @@ function gantt(lines: Line[]): DiagramResult {
     } else if (parts.length === 1) finishExpr = parts[0]!
     else fail('任务参数数量不正确；多个依赖请写为 after a b。', at)
     if (!/^[A-Za-z_][A-Za-z\d_-]*$/.test(id) || ids.has(id)) fail('任务 ID 必须唯一，并以字母或下划线开头。', at)
-    const task: Task = { id, name: text(match![1]!, at), section, at, flags, startExpr, finishExpr, previous: tasks.at(-1), dependencies: [] }
+    const task: Task = { id, name: text(match![1]!, at), section, sectionLine, at, flags, startExpr, finishExpr, previous: tasks.at(-1), dependencies: [] }
     tasks.push(task); ids.set(id, task)
     if (tasks.length > 150) fail('甘特图最多支持 150 个任务。', at)
   }
@@ -198,7 +202,11 @@ function gantt(lines: Line[]): DiagramResult {
     elements.push(diagramText(`gantt-detail-${task.id}`, summary, position.x + 5, position.y + 27, Math.max(160, barWidth), 18, { fontSize: 10, textAlign: 'left', stroke: '#64748b' }))
   }
   elements.push(diagramText('gantt-calendar-note', 'UTC 连续日历日 · 结束日期为不包含的边界 · 未排除周末或节假日', 70, y + 10, 1060, 34, { textAlign: 'left', fontSize: 13, stroke: '#64748b' }))
-  return finishDiagram('gantt', elements)
+  for (const task of tasks) {
+    sources.add(task.at.line, `gantt-name-${task.id}`, `gantt-task-${task.id}`, `gantt-detail-${task.id}`, ...task.dependencies.map(dependency => `gantt-dependency-${dependency}-${task.id}`))
+    sources.add(task.sectionLine, `gantt-section-bg-${task.id}`, `gantt-section-${task.id}`)
+  }
+  return finishDiagram('gantt', elements, [], sources)
 }
 
 interface Axis { title: string; categories?: string[]; minimum?: number; maximum?: number; at: Line }
@@ -220,13 +228,14 @@ function axis(value: string, at: Line, isX: boolean): Axis {
   return { title: value.trim() ? text(value, at) : '', at }
 }
 function xyChart(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const match = /^xychart(?:-beta)?(?:\s+(horizontal))?$/.exec(lines[0]!.text.trim())
   if (!match) return fail('XY 图开头支持 xychart-beta，可添加 horizontal。', lines[0]!)
   const horizontal = Boolean(match[1]), series: { type: 'bar' | 'line'; values: number[]; at: Line }[] = []
   let title = '数据趋势', hasTitle = false, xAxis: Axis | undefined, yAxis: Axis | undefined
   for (const at of lines.slice(1)) {
     const value = at.text.trim(), heading = /^title\s+(.+)$/.exec(value)
-    if (heading) { if (hasTitle) fail('XY 图只能设置一个标题。', at); title = text(heading[1]!, at); hasTitle = true; continue }
+    if (heading) { if (hasTitle) fail('XY 图只能设置一个标题。', at); title = text(heading[1]!, at); sources.add(at.line, 'chart-title'); hasTitle = true; continue }
     const declaration = /^([xy])-axis(?:\s+(.*))?$/.exec(value)
     if (declaration) {
       const isX = declaration[1] === 'x'
@@ -274,6 +283,7 @@ function xyChart(lines: Line[]): DiagramResult {
   const barCount = series.filter(item => item.type === 'bar').length, band = (horizontal ? height : width) / count * .7
   let barIndex = 0
   series.forEach((item, seriesIndex) => {
+    const firstElement = elements.length
     const color = COLORS[seriesIndex % COLORS.length]!, points = item.values.map((value, index) => point(index, value))
     if (item.type === 'bar') {
       const thickness = band / barCount, offset = -band / 2 + barIndex++ * thickness
@@ -294,22 +304,28 @@ function xyChart(lines: Line[]): DiagramResult {
     }
     elements.push(diagramNode(`xy-key-${seriesIndex}`, '', left + seriesIndex % 4 * 205, top + height + 115 + Math.floor(seriesIndex / 4) * 34, 18, 12, 'rectangle', style(color, color)))
     elements.push(diagramText(`xy-legend-${seriesIndex}`, `${item.type === 'bar' ? '柱形' : '折线'}序列 ${seriesIndex + 1}`, left + seriesIndex % 4 * 205 + 27, top + height + 104 + Math.floor(seriesIndex / 4) * 34, 165, 32, { textAlign: 'left', fontSize: 14 }))
+    sources.capture(item.at.line, elements, firstElement)
   })
-  return finishDiagram('xychart', elements)
+  if (xAxis) sources.add(xAxis.at.line, 'xy-x-title', ...elements.filter(element => element.id.startsWith('xy-x-tick-')).map(element => element.id))
+  if (yAxis) sources.add(yAxis.at.line, 'xy-y-title', ...elements.filter(element => element.id.startsWith('xy-y-tick-')).map(element => element.id))
+  return finishDiagram('xychart', elements, [], sources)
 }
 
 function quadrant(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   if (lines[0]!.text.trim() !== 'quadrantChart') return fail('象限图开头应为 quadrantChart。', lines[0]!)
   let title = '优先级分析', xLabels = ['较低', '较高'], yLabels = ['较低', '较高']
-  const quadrants = ['第一象限', '第二象限', '第三象限', '第四象限'], declarations = new Set<string>(), points: { name: string; x: number; y: number }[] = []
+  const quadrants = ['第一象限', '第二象限', '第三象限', '第四象限'], declarations = new Set<string>(), points: { name: string; x: number; y: number; at: Line }[] = []
   for (const at of lines.slice(1)) {
     const value = at.text.trim(), heading = /^title\s+(.+)$/.exec(value)
-    if (heading) { if (declarations.has('title')) fail('象限图只能设置一个标题。', at); declarations.add('title'); title = text(heading[1]!, at); continue }
+    if (heading) { if (declarations.has('title')) fail('象限图只能设置一个标题。', at); declarations.add('title'); title = text(heading[1]!, at); sources.add(at.line, 'chart-title'); continue }
     const declaration = /^(x-axis|y-axis|quadrant-[1-4])\s+(.+)$/.exec(value)
     if (declaration) {
       const key = declaration[1]!
       if (declarations.has(key)) fail(`“${key}”不能重复声明。`, at)
       declarations.add(key)
+      if (key.startsWith('quadrant-')) sources.add(at.line, `quadrant-area-${key.slice(-1)}`, `quadrant-title-${key.slice(-1)}`)
+      else sources.add(at.line, `quadrant-${key[0]}-low`, `quadrant-${key[0]}-high`)
       if (key.startsWith('quadrant-')) quadrants[Number(key.slice(-1)) - 1] = text(declaration[2]!, at)
       else {
         const pair = declaration[2]!.split(/\s*-->\s*/)
@@ -323,7 +339,7 @@ function quadrant(lines: Line[]): DiagramResult {
     if (!match) fail('象限数据格式为 名称: [x, y]，坐标范围为 0 到 1；样式指令暂不支持。', at)
     const x = number(match![2]!, at), y = number(match![3]!, at)
     if (x < 0 || x > 1 || y < 0 || y > 1) fail('象限图坐标必须在 0 到 1 之间。', at)
-    points.push({ name: text(match![1]!, at), x, y })
+    points.push({ name: text(match![1]!, at), x, y, at })
     if (points.length > 100) fail('象限图最多支持 100 个数据点。', at)
   }
   if (!points.length) fail('象限图需要至少一个数据点。', lines[0]!)
@@ -340,11 +356,12 @@ function quadrant(lines: Line[]): DiagramResult {
   elements.push(diagramText('quadrant-y-low', yLabels[0]!, 15, top + height - 50, 150, 40, { textAlign: 'right', stroke: '#475569' }))
   elements.push(diagramText('quadrant-y-high', yLabels[1]!, 15, top, 150, 40, { textAlign: 'right', stroke: '#475569' }))
   points.forEach((point, index) => {
+    sources.add(point.at.line, `quadrant-point-${index}`, `quadrant-label-${index}`)
     const x = left + point.x * width, y = top + (1 - point.y) * height
     elements.push(diagramNode(`quadrant-point-${index}`, '', x - 6, y - 6, 12, 12, 'ellipse', { fill: '#526da5', stroke: '#ffffff', strokeWidth: 2 }))
     elements.push(diagramText(`quadrant-label-${index}`, point.name, point.x > .75 ? x - 184 : x + 13, y - 18, 170, 36, { fontSize: 14, textAlign: point.x > .75 ? 'right' : 'left', stroke: '#334155' }))
   })
-  return finishDiagram('quadrant', elements)
+  return finishDiagram('quadrant', elements, [], sources)
 }
 
 function csv(value: string, at: Line): string[] {
@@ -373,6 +390,7 @@ function csv(value: string, at: Line): string[] {
   return fields
 }
 function sankey(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   if (!/^sankey(?:-beta)?$/.test(lines[0]!.text.trim())) return fail('桑基图开头应为 sankey-beta。', lines[0]!)
   const nodes = new Map<string, { id: number; name: string; input: number; output: number; rank: number; incoming: number; x: number; y: number; height: number }>()
   const links: { source: string; target: string; value: number; at: Line; from?: number; to?: number }[] = []
@@ -388,6 +406,7 @@ function sankey(lines: Line[]): DiagramResult {
     if (fields[0] === fields[1]) fail('桑基图不支持自身回流。', at)
     const from = node(fields[0]!), to = node(fields[1]!)
     from.output += value; to.input += value; to.incoming++
+    sources.add(at.line, `sankey-flow-${links.length}`)
     links.push({ source: from.name, target: to.name, value, at })
     if (nodes.size > 60 || links.length > 120) fail('桑基图最多支持 60 个节点和 120 条流向。', at)
   }
@@ -431,7 +450,7 @@ function sankey(lines: Line[]): DiagramResult {
     const summary = item.input && item.output && item.input !== item.output ? `入 ${labelNumber(item.input)} / 出 ${labelNumber(item.output)}` : labelNumber(Math.max(item.input, item.output))
     elements.push(diagramText(`sankey-label-${item.id}`, `${item.name}\n${summary}`, item.x + 28, item.y + item.height / 2 - 28, 210, 56, { fontSize: 14, textAlign: 'left' }))
   }
-  return finishDiagram('sankey', elements, warnings)
+  return finishDiagram('sankey', elements, warnings, sources)
 }
 
 function structuredList(value: string, at: Line): string[] {
@@ -458,13 +477,14 @@ function radarDescriptor(value: string, at: Line): { id: string; label: string }
   return { id: match[1]!, label: match[2] ? text(match[2], at) : match[1]! }
 }
 function radar(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   if (!/^radar(?:-beta)?$/.test(lines[0]!.text.trim())) return fail('雷达图开头应为 radar-beta。', lines[0]!)
-  const axes: { id: string; label: string }[] = [], curves: { id: string; label: string; raw: string[]; at: Line; values: number[] }[] = [], declarations = new Set<string>()
+  const axes: { id: string; label: string; at: Line }[] = [], curves: { id: string; label: string; raw: string[]; at: Line; values: number[] }[] = [], declarations = new Set<string>()
   let title = '多维能力比较', minimum = 0, maximum: number | undefined, ticks = 5, polygon = false, showLegend = true
   for (const at of lines.slice(1)) {
     const value = at.text.trim()
     if (value.startsWith('axis ')) {
-      for (const entry of structuredList(value.slice(5), at)) { const descriptor = radarDescriptor(entry, at); if (axes.some(axis => axis.id === descriptor.id)) fail('雷达轴 ID 不能重复。', at); axes.push(descriptor) }
+      for (const entry of structuredList(value.slice(5), at)) { const descriptor = radarDescriptor(entry, at); if (axes.some(axis => axis.id === descriptor.id)) fail('雷达轴 ID 不能重复。', at); axes.push({ ...descriptor, at }) }
       if (axes.length > 30) fail('雷达图最多支持 30 个轴。', at)
       continue
     }
@@ -484,7 +504,7 @@ function radar(lines: Line[]): DiagramResult {
     const key = directive![1]!, argument = directive![2]!.trim()
     if (declarations.has(key)) fail(`“${key}”不能重复声明。`, at)
     declarations.add(key)
-    if (key === 'title') title = text(argument, at)
+    if (key === 'title') { title = text(argument, at); sources.add(at.line, 'chart-title') }
     else if (key === 'min') minimum = number(argument, at)
     else if (key === 'max') maximum = number(argument, at)
     else if (key === 'ticks') { ticks = number(argument, at); if (!Number.isInteger(ticks) || ticks < 1 || ticks > 12) fail('ticks 必须为 1 到 12 的整数。', at) }
@@ -511,11 +531,13 @@ function radar(lines: Line[]): DiagramResult {
     elements.push(diagramText(`radar-tick-${index}`, labelNumber(minimum + (maximum - minimum) * index / ticks), cx + 6, cy - r - 16, 95, 26, { fontSize: 11, textAlign: 'left', stroke: '#718099' }))
   }
   axes.forEach((axis, index) => {
+    sources.add(axis.at.line, `radar-axis-${axis.id}`, `radar-label-${axis.id}`)
     const end = point(index, radius), label = point(index, radius + 42)
     elements.push(stroke(`radar-axis-${axis.id}`, [{ x: cx, y: cy }, end], { stroke: '#b9c5d6' }))
     elements.push(diagramText(`radar-label-${axis.id}`, axis.label, label.x - 90, label.y - 18, 180, 36, { fontSize: 15 }))
   })
   curves.forEach((curve, index) => {
+    const firstElement = elements.length
     const color = COLORS[index]!, points = curve.values.map((value, i) => point(i, radius * (value - minimum) / (maximum - minimum)))
     elements.push(diagramStroke(`radar-curve-${curve.id}`, points, { fill: color, stroke: color, strokeWidth: 2.5, opacity: .3 }, true))
     points.forEach((p, i) => elements.push(diagramNode(`radar-point-${curve.id}-${i}`, '', p.x - 3, p.y - 3, 6, 6, 'ellipse', { fill: color, stroke: color, strokeWidth: 1 })))
@@ -523,12 +545,14 @@ function radar(lines: Line[]): DiagramResult {
       elements.push(diagramNode(`radar-key-${curve.id}`, '', 810, 150 + index * 42, 18, 18, 'rectangle', style(color, color)))
       elements.push(diagramText(`radar-legend-${curve.id}`, curve.label, 842, 140 + index * 42, 240, 38, { textAlign: 'left', fontSize: 15 }))
     }
+    sources.capture(curve.at.line, elements, firstElement)
   })
-  return finishDiagram('radar', elements)
+  return finishDiagram('radar', elements, [], sources)
 }
 
 interface TreeEntry { id: number; name: string; at: Line; indent: number; children: TreeEntry[]; value?: number; childIndent?: number }
 function treemap(lines: Line[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   if (!/^treemap(?:-beta)?$/.test(lines[0]!.text.trim())) return fail('树图开头应为 treemap-beta。', lines[0]!)
   const root: TreeEntry = { id: -1, name: '', at: lines[0]!, indent: -1, children: [] }, stack = [root]
   let count = 0, previous: TreeEntry | undefined
@@ -544,6 +568,7 @@ function treemap(lines: Line[]): DiagramResult {
     const value = match![2] === undefined ? undefined : number(match![2], at)
     if (value !== undefined && value <= 0) fail('树图叶子的数值必须大于零。', at)
     const entry: TreeEntry = { id: count++, name: text(match![1]!, at), at, indent, value, children: [] }
+    sources.add(at.line, `treemap-leaf-${entry.id}`, `treemap-label-${entry.id}`, `treemap-group-${entry.id}`, `treemap-key-${entry.id}`, `treemap-detail-${entry.id}`)
     parent.children.push(entry); previous = entry
     if (value === undefined) stack.push(entry)
     if (count > 200 || stack.length > 11) fail('树图最多支持 200 个条目和 10 层嵌套。', at)
@@ -580,7 +605,7 @@ function treemap(lines: Line[]): DiagramResult {
     elements.push(diagramNode(`treemap-key-${entry.id}`, '', 1100, 130 + index * 34, 14, 14, 'rectangle', style(color, color)))
     elements.push(diagramText(`treemap-detail-${entry.id}`, `${path}  ${labelNumber(entry.value!)} · ${Number((entry.value! / root.value! * 100).toFixed(1))}%`, 1125, 118 + index * 34, 510, 36, { textAlign: 'left', fontSize: 13 }))
   })
-  return finishDiagram('treemap', elements, warnings)
+  return finishDiagram('treemap', elements, warnings, sources)
 }
 
 /** Returns undefined for diagram families owned by other parsers. */

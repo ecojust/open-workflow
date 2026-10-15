@@ -182,12 +182,12 @@ test('architecture preserves actual groups and exact cardinal-side endpoints wit
   const result = compile(`architecture-beta
 group api(cloud)[API]
 group data(database)[Data]
-service a(logos:react)[Frontend] in api
+service a(server)[应用服务] in api
 service b(server)[Backend] in api
 service db(database)[Storage] in data
 a:R --> L:b
 b:B --> T:db`)
-  const a = shapes(result).find(node => node.text.startsWith('Frontend')), b = shapes(result).find(node => node.text.startsWith('Backend')), db = shapes(result).find(node => node.text.startsWith('Storage'))
+  const a = shapes(result).find(node => node.text.startsWith('应用服务')), b = shapes(result).find(node => node.text.startsWith('Backend')), db = shapes(result).find(node => node.text.startsWith('Storage'))
   assert.deepEqual(edges(result)[0].from, { x: a.x + a.width, y: a.y + a.height / 2 })
   assert.deepEqual(edges(result)[0].to, { x: b.x, y: b.y + b.height / 2 })
   assert.deepEqual(edges(result)[1].from, { x: b.x + b.width / 2, y: b.y + b.height })

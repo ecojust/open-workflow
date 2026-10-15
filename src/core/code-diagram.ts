@@ -1,4 +1,4 @@
-import { DiagramSyntaxError, type DiagramResult } from './diagrams/common.ts'
+import { DiagramSyntaxError, DiagramSourceMap, sourceLines, type DiagramResult } from './diagrams/common.ts'
 import { compileStructureDiagram } from './diagrams/structure.ts'
 import { compileChartDiagram } from './diagrams/charts.ts'
 import { compilePlanningDiagram } from './diagrams/planning.ts'
@@ -7,8 +7,8 @@ import { layoutScene } from './layout.ts'
 
 /** Compile the supported diagram language into our editable scene model. */
 export type CodeDiagramResult = DiagramResult
-export { DiagramSyntaxError } from './diagrams/common.ts'
-interface Statement { text: string; line: number }
+export { DiagramSyntaxError, lookupDiagramSource, type DiagramSourceRange } from './diagrams/common.ts'
+interface Statement { text: string; line: number; start: number; end: number }
 const MAX_NODES = 400, MAX_EDGES = 800
 const ID = '[A-Za-z0-9_\\u0080-\\uFFFF]+(?:[-.][A-Za-z0-9_\\u0080-\\uFFFF]+)*'
 const idAtStart = new RegExp(`^${ID}`)
@@ -18,12 +18,12 @@ const style = (changes: Partial<ElementStyle> = {}): ElementStyle => ({ ...DEFAU
 /** Semicolons/comments are separators only outside labels, preserving their original line numbers. */
 function statements(source: string): Statement[] {
   const result: Statement[] = []
-  let text = '', line = 1, startLine = 1, quote = '', escaped = false, hasContent = false
+  let text = '', line = 1, startLine = 1, start = 0, quote = '', escaped = false, hasContent = false
   const brackets: string[] = []
-  const flush = () => { const value = text.trim(); if (value) result.push({ text: value, line: startLine }); text = ''; startLine = line; hasContent = false }
+  const flush = () => { const value = text.trim(); if (value) result.push({ text: value, line: startLine, start, end: start + value.length }); text = ''; startLine = line; hasContent = false }
   for (let i = 0; i < source.length; i++) {
     const c = source[i]!
-    if (!hasContent && !/\s/.test(c)) { startLine = line; hasContent = true }
+    if (!hasContent && !/\s/.test(c)) { startLine = line; start = i; hasContent = true }
     if (quote) {
       text += c
       if (escaped) escaped = false
@@ -77,11 +77,12 @@ function shape(id: string, text: string, kind: ShapeElement['shape'], x = 0, y =
     style: style({ fill: kind === 'diamond' ? '#fff7dc' : kind === 'ellipse' ? '#e8f7ef' : kind === 'note' ? '#fff3b0' : '#eff6ff' }) }
 }
 
-interface NodeToken { id: string; text?: string; shape?: ShapeElement['shape']; end: number }
+interface NodeToken { id: string; text?: string; shape?: ShapeElement['shape']; start: number; end: number }
 function readNode(statement: Statement, offset: number, warnings: Set<string>): NodeToken {
   const text = statement.text
   let cursor = offset
   while (/\s/.test(text[cursor] || '') && cursor < text.length) cursor++
+  const tokenStart = cursor
   const match = text.slice(cursor).match(idAtStart)
   if (!match) fail('这里需要节点标识，例如 A[开始]。', statement, cursor + 1)
   const id = match![0]; cursor += id.length
@@ -92,7 +93,7 @@ function readNode(statement: Statement, offset: number, warnings: Set<string>): 
     ['[', ']', 'rectangle'], ['(', ')', 'rectangle'], ['{', '}', 'diamond'],
   ]
   const form = forms.find(([open]) => text.startsWith(open, cursor))
-  if (!form) return { id, end: cursor }
+  if (!form) return { id, start: tokenStart, end: tokenStart + id.length }
   const [open, close, kind, warning] = form
   const start = cursor + open.length
   cursor = start
@@ -103,7 +104,7 @@ function readNode(statement: Statement, offset: number, warnings: Set<string>): 
       const value = text.slice(start, cursor)
       if (!value.trim()) fail('节点标签不能为空。', statement, start + 1)
       if (warning) warnings.add(warning)
-      return { id, shape: kind, text: labelText(value, warnings, statement), end: cursor + close.length }
+      return { id, shape: kind, text: labelText(value, warnings, statement), start: tokenStart, end: cursor + close.length }
     }
     if (escaped) escaped = false
     else if (c === '\\' && quoted) escaped = true
@@ -114,7 +115,7 @@ function readNode(statement: Statement, offset: number, warnings: Set<string>): 
   return fail(`节点标签缺少“${close}”。`, statement, start + 1)
 }
 
-interface ArrowToken { end: number; arrow: EdgeElement['arrow']; dashed: boolean; thick: boolean; label: string }
+interface ArrowToken { start: number; end: number; arrow: EdgeElement['arrow']; dashed: boolean; thick: boolean; label: string }
 function readArrow(statement: Statement, offset: number, warnings: Set<string>): ArrowToken {
   const rest = statement.text.slice(offset).trimStart(), start = statement.text.length - rest.length
   const direct = rest.match(/^(<-->|<==>|<-.->|-->|---|==>|===|-\.->|-\.-)/)
@@ -143,14 +144,16 @@ function readArrow(statement: Statement, offset: number, warnings: Set<string>):
     if (cursor === statement.text.length) fail('连线标签缺少结束的 |。', statement, end + 1)
     label = labelText(statement.text.slice(end + 1, cursor), warnings, statement); end = cursor + 1
   }
-  return { end, label, arrow: token.startsWith('<') ? 'both' : token.endsWith('>') ? 'end' : 'none', dashed: token.includes('.'), thick: token.includes('=') }
+  return { start, end, label, arrow: token.startsWith('<') ? 'both' : token.endsWith('>') ? 'end' : 'none', dashed: token.includes('.'), thick: token.includes('=') }
 }
 
 function compileFlow(statements: Statement[], direction: 'TB' | 'LR' | 'RL' | 'BT'): CodeDiagramResult {
   const nodes = new Map<string, ShapeElement>(), edges: EdgeElement[] = [], warnings = new Set<string>()
+  const sourceMap = new DiagramSourceMap()
   const addNode = (token: NodeToken, statement: Statement) => {
     const old = nodes.get(token.id)
     if (token.shape || !old) nodes.set(token.id, shape(`m-node-${token.id}`, token.text ?? token.id, token.shape ?? 'rectangle'))
+    sourceMap.range(statement.start + token.start, statement.start + token.end, `m-node-${token.id}`)
     if (nodes.size > MAX_NODES) fail(`节点不能超过 ${MAX_NODES} 个。`, statement)
   }
   for (const statement of statements) {
@@ -164,29 +167,31 @@ function compileFlow(statements: Statement[], direction: 'TB' | 'LR' | 'RL' | 'B
       addNode(next, statement)
       edges.push({ id: `m-edge-${edges.length}`, type: 'edge', from: { nodeId: `m-node-${node.id}`, x: 0, y: 0 }, to: { nodeId: `m-node-${next.id}`, x: 0, y: 0 },
         label: arrow.label, arrow: arrow.arrow, route: 'orthogonal', style: style({ dashed: arrow.dashed, strokeWidth: arrow.thick ? 4 : 2 }), locked: false })
+      sourceMap.range(statement.start + arrow.start, statement.start + statement.text.slice(0, arrow.end).trimEnd().length, edges.at(-1)!.id)
       if (edges.length > MAX_EDGES) fail(`连线不能超过 ${MAX_EDGES} 条。`, statement)
       node = next; cursor = next.end
     }
   }
   if (!nodes.size) throw new DiagramSyntaxError('请至少添加一个节点，例如 A[开始] --> B[结束]。', 2)
-  return { kind: 'flowchart', scene: layoutScene({ elements: [...edges, ...nodes.values()], background: '#ffffff', grid: true }, direction), warnings: [...warnings] }
+  const scene = layoutScene({ elements: [...edges, ...nodes.values()], background: '#ffffff', grid: true }, direction)
+  return { kind: 'flowchart', scene, warnings: [...warnings], sourceMap: sourceMap.entries(scene.elements) }
 }
 
-interface Participant { id: string; name: string; actor: boolean }
-type SequenceItem = { type: 'message'; from: string; to: string; text: string; dashed: boolean; arrow: EdgeElement['arrow']; number?: number }
-  | { type: 'note'; side: 'left of' | 'right of' | 'over'; ids: string[]; text: string }
+interface Participant { id: string; name: string; actor: boolean; lines: number[] }
+type SequenceItem = { line: number; type: 'message'; from: string; to: string; text: string; dashed: boolean; arrow: EdgeElement['arrow']; number?: number }
+  | { line: number; type: 'note'; side: 'left of' | 'right of' | 'over'; ids: string[]; text: string }
 function compileSequence(statements: Statement[]): CodeDiagramResult {
-  const participants = new Map<string, Participant>(), items: SequenceItem[] = [], warnings = new Set<string>()
+  const participants = new Map<string, Participant>(), items: SequenceItem[] = [], warnings = new Set<string>(), sourceMap = new DiagramSourceMap(statements)
   let number: number | undefined, increment = 1
   const ensure = (id: string, statement: Statement) => {
-    if (!participants.has(id)) participants.set(id, { id, name: id, actor: false })
+    if (!participants.has(id)) participants.set(id, { id, name: id, actor: false, lines: [] })
     if (participants.size > 40) fail('时序图最多支持 40 个参与者。', statement)
   }
   for (const statement of statements) {
     const declaration = statement.text.match(new RegExp(`^(participant|actor)\\s+(${ID})(?:\\s+as\\s+(.+))?$`))
     if (declaration) {
       ensure(declaration[2]!, statement)
-      participants.set(declaration[2]!, { id: declaration[2]!, name: labelText(declaration[3] ?? declaration[2]!, warnings, statement), actor: declaration[1] === 'actor' })
+      participants.set(declaration[2]!, { id: declaration[2]!, name: labelText(declaration[3] ?? declaration[2]!, warnings, statement), actor: declaration[1] === 'actor', lines: [...participants.get(declaration[2]!)!.lines, statement.line] })
       continue
     }
     const auto = statement.text.match(/^autonumber(?:\s+(\d+)(?:\s+(\d+))?)?$/)
@@ -196,14 +201,14 @@ function compileSequence(statements: Statement[]): CodeDiagramResult {
       const side = note[1]!.toLowerCase() as 'left of' | 'right of' | 'over'
       if (side !== 'over' && note[3]) fail('left of / right of 注释只能指定一个参与者。', statement)
       const ids = [note[2]!, ...(note[3] ? [note[3]] : [])]; ids.forEach(id => ensure(id, statement))
-      items.push({ type: 'note', side, ids, text: labelText(note[4]!, warnings, statement) })
+      items.push({ line: statement.line, type: 'note', side, ids, text: labelText(note[4]!, warnings, statement) })
       if (items.length > MAX_EDGES) fail(`时序图最多支持 ${MAX_EDGES} 个事件。`, statement)
       continue
     }
     const message = statement.text.match(new RegExp(`^(${ID})\\s*(<<-->>|<<->>|-->>|->>|-->|->)\\s*(${ID})\\s*:\\s*(.*)$`))
     if (message) {
       ensure(message[1]!, statement); ensure(message[3]!, statement)
-      items.push({ type: 'message', from: message[1]!, to: message[3]!, dashed: message[2]!.includes('--'), arrow: message[2]!.startsWith('<') ? 'both' : 'end', text: labelText(message[4]!, warnings, statement), number })
+      items.push({ line: statement.line, type: 'message', from: message[1]!, to: message[3]!, dashed: message[2]!.includes('--'), arrow: message[2]!.startsWith('<') ? 'both' : 'end', text: labelText(message[4]!, warnings, statement), number })
       if (message[2]!.includes('>>')) warnings.add('时序图消息箭头统一显示为开放式箭头。')
       if (number !== undefined) number += increment
       if (items.length > MAX_EDGES) fail(`时序图最多支持 ${MAX_EDGES} 个事件。`, statement)
@@ -218,10 +223,11 @@ function compileSequence(statements: Statement[]): CodeDiagramResult {
     elements.push({ id: `m-seq-edge-${counter++}`, type: 'edge', from: { x: x1, y: y1 }, to: { x: x2, y: y2 }, label: '', arrow, route: 'straight', style: style({ dashed }), locked: false })
   }
   for (const item of items) {
+    const firstElement = elements.length
     if (item.type === 'note') {
       const first = centers.get(item.ids[0]!)!, last = centers.get(item.ids[1] ?? item.ids[0]!)!, width = item.ids.length === 2 ? Math.abs(last - first) + 160 : 190
       const note = shape(`m-seq-note-${counter++}`, item.text, 'note', item.side === 'left of' ? first - width - 16 : item.side === 'right of' ? first + 16 : Math.min(first, last) - width / 2 + Math.abs(last - first) / 2, y - 12, width)
-      elements.push(note); y += note.height + 35; continue
+      elements.push(note); sourceMap.capture(item.line, elements, firstElement); y += note.height + 35; continue
     }
     const from = centers.get(item.from)!, to = centers.get(item.to)!, self = from === to
     const label = shape(`m-seq-label-${counter++}`, `${item.number === undefined ? '' : `${item.number}. `}${item.text}`, 'text', Math.min(from, to) + (self ? 18 : 8), y - 16, self ? 190 : Math.max(180, Math.abs(to - from) - 16))
@@ -235,9 +241,11 @@ function compileSequence(statements: Statement[]): CodeDiagramResult {
       edge(from + 76, messageY + 32, from, messageY + 32, item.dashed, item.arrow)
       y = messageY + 82
     } else { edge(from, messageY, to, messageY, item.dashed, item.arrow); y = messageY + 58 }
+    sourceMap.capture(item.line, elements, firstElement)
   }
   const headers: SceneElement[] = [], lifelines: SceneElement[] = []
   for (const person of list) {
+    const firstHeader = headers.length
     const center = centers.get(person.id)!
     lifelines.push({ id: `m-seq-life-${person.id}`, type: 'edge', from: { x: center, y: 112 }, to: { x: center, y: y + 16 }, label: '', arrow: 'none', route: 'straight', style: style({ dashed: true, stroke: '#94a3b8', strokeWidth: 1 }), locked: false })
     if (person.actor) {
@@ -246,24 +254,26 @@ function compileSequence(statements: Statement[]): CodeDiagramResult {
       const name = shape(`m-seq-name-${person.id}`, person.name, 'text', center - 100, 88, 200, 28); name.style = style({ fill: 'none' }); headers.push(name)
     } else headers.push(shape(`m-seq-participant-${person.id}`, person.name, 'rectangle', center - 90, 40, 180, 64))
     headers.push(shape(`m-seq-footer-${person.id}`, person.name, 'rectangle', center - 90, y + 16, 180, 56))
+    for (const line of person.lines) { sourceMap.capture(line, headers, firstHeader); sourceMap.add(line, `m-seq-life-${person.id}`) }
   }
-  return { kind: 'sequence', scene: { elements: [...lifelines, ...elements, ...headers], background: '#ffffff', grid: false }, warnings: [...warnings] }
+  const scene: Scene = { elements: [...lifelines, ...elements, ...headers], background: '#ffffff', grid: false }
+  return { kind: 'sequence', scene, warnings: [...warnings], sourceMap: sourceMap.entries(scene.elements) }
 }
 
-export function compileCodeDiagram(source: string): CodeDiagramResult {
+function compileNormalized(source: string): CodeDiagramResult {
   if (typeof source !== 'string') throw new DiagramSyntaxError('源码必须是文本。', 1)
   if (source.length > 200_000) throw new DiagramSyntaxError('源码不能超过 200,000 个字符。', 1)
   // Sequence message text may contain punctuation/brackets, so only flowcharts use bracket-aware splitting.
-  const normalized = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
+  const normalized = source
   const first = normalized.split('\n').find(line => line.trim() && !/^\s*%%(?!\{)/.test(line))?.trim()
   if (!first) throw new DiagramSyntaxError('请输入图表源码，或从模板库选择一种图表。', 1)
   const extended = compileStructureDiagram(normalized) ?? compileChartDiagram(normalized) ?? compilePlanningDiagram(normalized)
   if (extended) return extended
   if (first === 'sequenceDiagram' || /^sequenceDiagram\s*%%(?!\{)/.test(first)) {
-    const lines: Statement[] = []
-    normalized.split('\n').forEach((line, index) => {
-      if (/^\s*%%\{/.test(line)) throw new DiagramSyntaxError('暂不支持图表初始化指令。', index + 1)
-      if (line.trim() && !/^\s*%%/.test(line)) lines.push({ text: line.trim(), line: index + 1 })
+    const lines = sourceLines(normalized).map(entry => {
+      if (/^\s*%%\{/.test(entry.text)) throw new DiagramSyntaxError('暂不支持图表初始化指令。', entry.line)
+      const start = entry.start + entry.text.length - entry.text.trimStart().length
+      return { ...entry, text: entry.text.trim(), start }
     })
     return compileSequence(lines.slice(1))
   }
@@ -272,4 +282,21 @@ export function compileCodeDiagram(source: string): CodeDiagramResult {
   const flow = header.text.match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)$/)
   if (!flow) fail('不支持此图表声明，请从图表模板库选择支持的类型。', header)
   return compileFlow(parts, flow![1] === 'TD' ? 'TB' : flow![1] as 'TB' | 'LR' | 'RL' | 'BT')
+}
+
+/** Normalize line endings once and translate metadata back to the original editor buffer. */
+export function compileCodeDiagram(source: string): CodeDiagramResult {
+  if (typeof source !== 'string') throw new DiagramSyntaxError('源码必须是文本。', 1)
+  if (source.length > 200_000) throw new DiagramSyntaxError('源码不能超过 200,000 个字符。', 1)
+  if (!source.startsWith('\uFEFF') && !source.includes('\r')) return compileNormalized(source)
+  const offsets: number[] = [], characters: string[] = []
+  for (let i = source.startsWith('\uFEFF') ? 1 : 0; i < source.length; i++) {
+    offsets.push(i)
+    if (source[i] === '\r') { characters.push('\n'); if (source[i + 1] === '\n') i++ }
+    else characters.push(source[i]!)
+  }
+  offsets.push(source.length)
+  const result = compileNormalized(characters.join(''))
+  result.sourceMap = result.sourceMap.map(range => ({ ...range, start: offsets[range.start]!, end: offsets[range.end]! }))
+  return result
 }

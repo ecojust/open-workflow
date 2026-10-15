@@ -332,7 +332,7 @@ async function main() {
     await contextAction(page, byId(page, shapes[1].id), '锁定')
     await draw(page, 'highlighter', [.12, .55], [.70, .55])
     await draw(page, 'pen', [.12, .66], [.70, .66])
-    const before = await save(page), highlight = before.scene.elements.find(e => e.type === 'stroke' && e.style.opacity === .32)
+    const before = await save(page), highlight = before.scene.elements.find(e => e.type === 'stroke' && e.brush === 'highlighter')
     assert.ok(highlight && highlight.style.strokeWidth >= 14 && highlight.points.length > 3)
     await page.getByTestId('tool-eraser').click()
     await gesture(page, await stagePoint(page, .24, .27), await stagePoint(page, .24, .72))
@@ -345,15 +345,18 @@ async function main() {
     assert.deepEqual((await save(page)).scene.elements, before.scene.elements, 'One undo restores every element touched in a single eraser gesture')
     await redo(page)
     assert.equal((await save(page)).scene.elements.length, 1)
-    for (const [index, width] of [50, 100].entries()) {
-      await page.getByTestId('global-style-toggle').click()
-      await page.locator('#global-width').fill(String(width))
-      await page.locator('#global-width').press('Tab')
+    for (const [index, width] of [50, 150].entries()) {
+      await page.getByTestId('brush-settings-toggle').click()
+      await page.getByTestId('brush-highlighter').click()
+      await page.getByTestId('brush-width').fill(String(width))
+      await page.getByTestId('brush-width').press('Tab')
+      await page.getByTestId('brush-start').click()
       await draw(page, 'highlighter', [.15, .54 + index * .14], [.70, .54 + index * .14])
       const wide = await save(page), strokes = wide.scene.elements.filter(e => e.type === 'stroke')
       assert.equal(strokes.length, index + 1, 'Wide highlighter must stay on the canvas instead of rolling back')
-      assert.equal(strokes.at(-1).style.strokeWidth, 100, 'Highlighter width clamps to the scene format maximum')
-      assert.equal(strokes.at(-1).style.opacity, .32)
+      assert.equal(strokes.at(-1).style.strokeWidth, Math.min(width, 100), 'Independent brush width respects the scene format maximum')
+      assert.equal(strokes.at(-1).style.opacity, 1)
+      await expect(page.locator('[data-brush="highlighter"] > g').last()).toHaveAttribute('opacity', '.32')
     }
   })
 

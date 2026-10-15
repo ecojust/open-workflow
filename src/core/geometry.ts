@@ -1,4 +1,5 @@
 import type { EdgeElement, Point, Scene, SceneElement, ShapeElement } from './types.ts'
+import { brushRadiusAt } from './brushes.ts'
 
 export interface Bounds { x: number; y: number; width: number; height: number }
 export function elementBounds(element: SceneElement): Bounds {
@@ -6,7 +7,10 @@ export function elementBounds(element: SceneElement): Bounds {
   const points = element.type === 'stroke' ? element.points : [element.from, element.to]
   if (!points.length) return { x: 0, y: 0, width: 0, height: 0 }
   let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity
-  for (const point of points) { x = Math.min(x, point.x); y = Math.min(y, point.y); right = Math.max(right, point.x); bottom = Math.max(bottom, point.y) }
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]!, radius = element.type === 'stroke' && (element.brush || element.pressures) ? brushRadiusAt(element, index) : 0
+    x = Math.min(x, point.x - radius); y = Math.min(y, point.y - radius); right = Math.max(right, point.x + radius); bottom = Math.max(bottom, point.y + radius)
+  }
   return { x, y, width: right - x, height: bottom - y }
 }
 export function combineBounds(bounds: Bounds[]): Bounds {

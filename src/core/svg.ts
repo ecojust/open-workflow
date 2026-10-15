@@ -1,7 +1,8 @@
-import type { ElementStyle, Point, Scene, SceneElement, ShapeElement } from './types.ts'
+import type { ElementStyle, Point, Scene, SceneElement, ShapeElement, StrokeElement } from './types.ts'
 import { edgePoints, pathMidpoint, pointsPath, sceneBounds, shapeOutline, isBraceShape, bracePath, braceTextBounds } from './geometry.ts'
 import { anchoredPolygon, sketchEllipse, sketchPolyline } from './sketch.ts'
 import { resolveStrokePattern } from './appearance.ts'
+import { brushOutlinePath, brushPolyline, brushRadiusAt, rainbowSegments } from './brushes.ts'
 
 export function escapeXml(value: unknown): string { return String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff\ufffe\uffff]/gu, '\uFFFD').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!) }
 export function safeImageData(value: unknown): value is string {
@@ -22,6 +23,25 @@ function strokeMarkup(points: Point[], id: string, style: ElementStyle, closed =
   // trajectory instead of multiplying a 100000-point drawing into cubic control data.
   return isSketch(style) && points.length <= 2048 ? sketchMarkup(sketchPolyline(points, id, style.strokeWidth, closed), style)
     : `<path d="${pointsPath(points)}${closed ? ' Z' : ''}" ${styleAttrs(style, 'none')}/>`
+}
+function brushMarkup(element: StrokeElement): string {
+  const brush = element.brush ?? 'pen', opacity = Math.max(0, Math.min(1, element.style.opacity)), ink = color(element.style.stroke), width = Math.max(0, Math.min(100, element.style.strokeWidth))
+  if (!element.points.length || !width) return ''
+  let markup: string
+  if (brush === 'pencil') {
+    markup = `<path data-pencil-grain="base" d="${brushOutlinePath(element)}" fill="${ink}" fill-rule="evenodd" stroke="none" opacity=".16"/>` + [0, 1, 2].map(pass => {
+      const points = element.points.map((point, index) => {
+        const radius = brushRadiusAt(element, index), noise = Math.sin(index * 12.9898 + pass * 41.73) * .13
+        return { x: point.x + (pass - 1 + noise) * radius * .36, y: point.y + (1 - pass + noise) * radius * .36 }
+      })
+      if (points.length === 1) points.push({ x: points[0]!.x + .01, y: points[0]!.y + .01 })
+      return `<path data-pencil-pass="${pass + 1}" d="${brushPolyline(points)}${element.closed ? ' Z' : ''}" fill="none" stroke="${ink}" stroke-width="${width * .22}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${pass === 1 ? '1.7 .35' : '.7 .6'}" stroke-dashoffset="${pass * .37}" opacity="${pass === 1 ? .72 : .42}"/>`
+    }).join('')
+  } else if (brush === 'rainbow') {
+    if (element.points.length === 1) markup = `<circle cx="${element.points[0]!.x}" cy="${element.points[0]!.y}" r="${brushRadiusAt(element, 0)}" fill="hsl(0 85% 55%)"/>`
+    else markup = rainbowSegments(element).map(segment => `<path d="${brushOutlinePath({ ...element, brush: 'pen', points: segment.points, pressures: segment.pressures, closed: false })}" fill="hsl(${segment.hue} 85% 55%)" stroke="none"/>`).join('')
+  } else markup = `<path d="${brushOutlinePath(element)}" fill="${ink}" fill-rule="evenodd" stroke="none"/>`
+  return `<g data-brush="${escapeXml(brush)}" opacity="${opacity}">${brush === 'highlighter' ? `<g opacity=".32">${markup}</g>` : markup}</g>`
 }
 function boundAnchors(node: ShapeElement, scene: Scene): Point[] {
   const anchors: Point[] = []
@@ -87,7 +107,7 @@ export function elementToSvg(element: SceneElement, scene: Scene, hitTargets = f
     const points = element.points.length === 1 ? [element.points[0]!, { x: element.points[0]!.x + 0.01, y: element.points[0]!.y + 0.01 }] : element.points
     const closed = element.closed === true && points.length >= 3, d = pointsPath(points) + (closed ? ' Z' : '')
     const fill = closed ? `<path d="${d}" fill="${color(element.style.fill)}" stroke="none" opacity="${Math.max(0, Math.min(1, element.style.opacity))}"/>` : ''
-    return `${fill}${hitTargets ? `<path d="${d}" fill="${closed ? 'transparent' : 'none'}" stroke="transparent" stroke-width="${Math.max(16, element.style.strokeWidth)}"/>` : ''}${strokeMarkup(points, element.id, element.style, closed)}`
+    return `${fill}${hitTargets ? `<path d="${d}" fill="${closed ? 'transparent' : 'none'}" stroke="transparent" stroke-width="${Math.max(16, element.style.strokeWidth)}"/>` : ''}${element.brush || element.pressures ? brushMarkup(element) : strokeMarkup(points, element.id, element.style, closed)}`
   }
   if (element.type === 'edge') {
     const points = edgePoints(element, scene), d = pointsPath(points), middle = pathMidpoint(points)

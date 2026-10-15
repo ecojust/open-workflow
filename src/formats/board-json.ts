@@ -2,6 +2,7 @@ import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, ty
 import { edgePoints, elementBounds, isBraceShape, shapeOutline, braceTextBounds } from '../core/geometry.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
 import { validateElementStyle } from '../core/documents.ts'
+import { readBrushData } from '../core/brushes.ts'
 
 type Json = Record<string, unknown>
 const isObject = (value: unknown): value is Json => Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -82,6 +83,7 @@ export function importBoardJson(text: string): ImportedScene {
   const mapped = new Map<string, SceneElement>()
   const pendingLabels: Json[] = []
   const files = isObject(data.files) ? data.files : {}
+  let strokePoints = 0
   for (const element of source) {
     const id = element.id as string
     const kind = element.type
@@ -106,11 +108,13 @@ export function importBoardJson(text: string): ImportedScene {
       result = { id, type: 'shape', shape: native.shape, x: finite(bounds.x), y: finite(bounds.y), width: Math.max(1, finite(bounds.width, 160)), height: Math.max(1, finite(bounds.height, 180)), text: safeText(native.text), style: { ...style, fontSize: Math.max(1, Math.min(500, finite(native.fontSize, DEFAULT_STYLE.fontSize))), textAlign: native.textAlign === 'left' || native.textAlign === 'right' ? native.textAlign : 'center' }, locked }
       warnings.add('大括弧通过本软件元数据恢复；外部软件仅显示普通笔迹与独立文字，可能无法保留括弧编辑与绑定语义。')
     } else if (kind === 'freedraw' || native?.type === 'stroke') {
-      const pressures = element.pressures
-      if (Array.isArray(pressures) && pressures.some(value => value !== pressures[0])) warnings.add('笔迹压感已简化为固定线宽。')
       const points = worldPoints(element, native?.closed === true ? 3 : 1, native?.closed === true ? 100001 : 100000)
       if (native?.closed === true && points.length > 3 && points[0]!.x === points.at(-1)!.x && points[0]!.y === points.at(-1)!.y) points.pop()
-      result = { id, type: 'stroke', points, style, locked, ...(native?.closed === true ? { closed: true } : {}) }
+      if ((strokePoints += points.length) > 100000) throw new Error('笔迹总点数超过 100000。')
+      const importedPressures = Array.isArray(element.pressures) && element.pressures.length ? element.pressures : undefined
+      const metadata = readBrushData(native?.brush, native?.pressures ?? importedPressures, points.length)
+      if (native?.brush !== undefined) warnings.add('笔触通过本软件元数据恢复；外部软件可能以普通笔迹显示，纹理、扁头和彩虹效果以原生文件或图像导出为准。')
+      result = { id, type: 'stroke', points, style, locked, ...metadata, ...(native?.closed === true ? { closed: true } : {}) }
     } else if (kind === 'arrow' || kind === 'line') {
       const points = worldPoints(element)
       if (points.length > 2 && element.elbowed !== true) warnings.add('折线与曲线已简化为两端点连线。')
@@ -209,7 +213,8 @@ export function exportBoardJson(scene: Scene): string {
     } else if (element.type === 'stroke') {
       if (!element.points.length) throw new Error('笔迹没有坐标，无法导出。')
       const { x, y, width, height } = elementBounds(element)
-      Object.assign(result, { type: element.closed ? 'line' : 'freedraw', customData: { openWorkflow: { type: 'stroke', ...(element.closed ? { closed: true } : {}) } }, x, y, width, height, points: [...element.points, ...(element.closed ? [element.points[0]!] : [])].map(point => [point.x - x, point.y - y]), startArrowhead: null, endArrowhead: null, pressures: [], simulatePressure: true, lastCommittedPoint: null })
+      const metadata = readBrushData(element.brush, element.pressures, element.points.length)
+      Object.assign(result, { type: element.closed ? 'line' : 'freedraw', customData: { openWorkflow: { type: 'stroke', ...metadata, ...(element.closed ? { closed: true } : {}), ...(element.brush ? { compatibility: '外部软件可能显示为普通笔迹；纹理、扁头和彩虹效果依赖本软件元数据，完整外观请使用原生文件或图像导出' } : {}) } }, x, y, width, height, points: [...element.points, ...(element.closed ? [element.points[0]!] : [])].map(point => [point.x - x, point.y - y]), startArrowhead: null, endArrowhead: null, pressures: element.pressures ? [...element.pressures, ...(element.closed ? [element.pressures[0]!] : [])] : [], simulatePressure: !element.pressures, lastCommittedPoint: null })
       elements.push(result)
     } else {
       const world = edgePoints(element, scene)

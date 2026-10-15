@@ -1,5 +1,6 @@
 import { newId, type EdgeElement, type Point, type Scene, type SceneElement } from './types.ts'
 import { combineBounds, distanceToSegment, edgePoints, elementBounds, outlineDistance, pointInPolygon, pointInside, shapeContainsPoint, type Bounds } from './geometry.ts'
+import { brushHit } from './brushes.ts'
 
 /** Return a stable, scene-ordered selection, expanding the scene's flat groups. */
 export function expandedSelection(scene: Scene, ids: readonly string[]): string[] {
@@ -146,7 +147,7 @@ export function hitTestElement(scene: Scene, point: Point, zoom: number): SceneE
     } else if (element.type === 'edge') {
       if (pathHit(edgePoints(element, scene), point, tolerance)) return element
     } else {
-      if (pathHit(element.points, point, tolerance, element.closed)) return element
+      if (element.brush || element.pressures ? brushHit(element, point, 6 / scale) : pathHit(element.points, point, tolerance, element.closed)) return element
       if (element.closed && element.points.length > 2 && element.style.fill !== 'none' && element.style.fill !== 'transparent' && pointInPolygon(point, element.points)) return element
     }
   }

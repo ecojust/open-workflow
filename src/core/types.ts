@@ -2,6 +2,7 @@ import type { DiagramStyleId } from './diagram-appearance.ts'
 
 export type DocumentKind = 'flow' | 'board' | 'mermaid'
 export interface Point { x: number; y: number }
+export type BrushKind = 'pen' | 'pencil' | 'marker' | 'brush' | 'highlighter' | 'rainbow'
 export interface ElementStyle {
   stroke: string
   fill: string
@@ -44,6 +45,8 @@ export interface StrokeElement {
   id: string
   type: 'stroke'
   points: Point[]
+  brush?: BrushKind
+  pressures?: number[]
   closed?: boolean
   style: ElementStyle
   locked: boolean

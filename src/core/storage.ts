@@ -10,6 +10,7 @@ function migrateSavedKey(document: WorkflowDocument, savedKey: unknown): string 
   const currentKey = contentKey(document)
   if (savedKey === currentKey) return savedKey
   if (normalizeDiagramStyle(document.diagramStyle) !== 'classic') return savedKey
+  if (document.scene.elements.some(element => element.type === 'stroke' && (element.brush !== undefined || element.pressures !== undefined))) return savedKey
   const elements = document.scene.elements.map(element => {
     const s = element.style
     const base = [element.id, element.type, element.locked, [s.stroke, s.fill, s.strokeWidth, s.fontSize, s.textAlign, s.opacity, s.dashed]]

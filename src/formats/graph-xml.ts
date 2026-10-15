@@ -3,6 +3,7 @@ import { DEFAULT_STYLE, type ElementStyle, type Endpoint, type ImportedScene, ty
 import { edgePoints, isBraceShape, shapeOutline, braceTextBounds } from '../core/geometry.ts'
 import { resolveStrokePattern, sceneDefaultStyle } from '../core/appearance.ts'
 import { validateElementStyle } from '../core/documents.ts'
+import { readBrushData } from '../core/brushes.ts'
 
 const MAX_TEXT = 20 * 1024 * 1024
 const MAX_ELEMENTS = 5000
@@ -204,7 +205,10 @@ function importModel(model: Element, title: string): ImportedScene {
     const pointsContainer = geometry ? children(geometry, 'Array').find(array => array.getAttribute('as') === 'points') : undefined
     const waypoints = pointsContainer ? children(pointsContainer, 'mxPoint').map(point => ({ x: finite(point.getAttribute('x')) + parent.x, y: finite(point.getAttribute('y')) + parent.y })) : []
     if (cell.getAttribute('openWorkflowType') === 'stroke') {
-      elements.push({ id: idMap.get(id)!, type: 'stroke', ...(cell.getAttribute('openWorkflowClosed') === '1' ? { closed: true } : {}), points: cell.getAttribute('openWorkflowSinglePoint') === '1' ? [from] : [from, ...waypoints, to], style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' }); continue
+      const points = cell.getAttribute('openWorkflowSinglePoint') === '1' ? [from] : [from, ...waypoints, to]
+      const metadata = readBrushData(cell.hasAttribute('openWorkflowBrush') ? cell.getAttribute('openWorkflowBrush') : undefined, cell.hasAttribute('openWorkflowPressures') ? JSON.parse(cell.getAttribute('openWorkflowPressures')!) : undefined, points.length)
+      if (metadata.brush) warnings.add('笔触通过本软件元数据恢复；外部软件显示为普通线条，压感、纹理、扁头和彩虹效果以原生文件或图像导出为准。')
+      elements.push({ id: idMap.get(id)!, type: 'stroke', ...(cell.getAttribute('openWorkflowClosed') === '1' ? { closed: true } : {}), points, ...metadata, style, ...(cell.getAttribute('openWorkflowGroup') ? { groupId: cell.getAttribute('openWorkflowGroup')! } : {}), locked: cell.getAttribute('openWorkflowLocked') === '1' }); continue
     }
     if (waypoints.length) warnings.add('手工连线折点已简化为自动直线或正交连线。')
     if (map.curved === '1' || (map.edgeStyle && !['orthogonalEdgeStyle', 'elbowEdgeStyle'].includes(map.edgeStyle))) warnings.add('曲线和特殊连线路由已简化。')
@@ -217,6 +221,7 @@ function importModel(model: Element, title: string): ImportedScene {
   // Filled ink, labels and connectors may be interleaved with ordinary shapes.
   const layerOrder = new Map([...cellMap.keys()].map((id, index) => [idMap.get(id)!, index]))
   elements.sort((a, b) => layerOrder.get(a.id)! - layerOrder.get(b.id)!)
+  if (elements.reduce((sum, element) => sum + (element.type === 'stroke' ? element.points.length : 0), 0) > 100000) throw new Error('笔迹总点数超过 100000。')
   const defaultStyleText = model.getAttribute('openWorkflowDefaultStyle')
   const defaultStyle = defaultStyleText ? validateElementStyle(JSON.parse(defaultStyleText)) : undefined
   return { title, scene: { elements, background: color(model.getAttribute('background') || undefined, '#ffffff', warnings), grid: model.getAttribute('grid') !== '0', ...(defaultStyle ? { defaultStyle } : {}) }, warnings: [...warnings] }
@@ -267,7 +272,10 @@ export function exportGraphXml(scene: Scene, title: string): string {
     }
     if (element.type === 'stroke') {
       if (!element.points.length) throw new Error('笔迹没有坐标，无法导出。')
-      return `<mxCell ${attributes} openWorkflowType="stroke"${element.closed ? ' openWorkflowClosed="1"' : ''}${element.points.length === 1 ? ' openWorkflowSinglePoint="1"' : ''} edge="1" style="${xml(`${writeStyle(element.style)}endArrow=none;startArrow=none;`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', element.points[0]!)}${point('targetPoint', element.points.at(-1)!)}<Array as="points">${element.points.slice(1, -1).map(value => `<mxPoint x="${value.x}" y="${value.y}"/>`).join('')}</Array></mxGeometry></mxCell>`
+      const metadata = readBrushData(element.brush, element.pressures, element.points.length)
+      const brush = metadata.brush ? ` openWorkflowBrush="${metadata.brush}" openWorkflowCompatibility="外部软件显示为普通线条；完整笔触与压感依赖本软件元数据，完整外观请使用原生文件或图像导出"` : ''
+      const pressures = metadata.pressures ? ` openWorkflowPressures="${xml(JSON.stringify(metadata.pressures))}"` : ''
+      return `<mxCell ${attributes} openWorkflowType="stroke"${brush}${pressures}${element.closed ? ' openWorkflowClosed="1"' : ''}${element.points.length === 1 ? ' openWorkflowSinglePoint="1"' : ''} edge="1" style="${xml(`${writeStyle(element.style)}endArrow=none;startArrow=none;`)}"><mxGeometry relative="1" as="geometry">${point('sourcePoint', element.points[0]!)}${point('targetPoint', element.points.at(-1)!)}<Array as="points">${element.points.slice(1, -1).map(value => `<mxPoint x="${value.x}" y="${value.y}"/>`).join('')}</Array></mxGeometry></mxCell>`
     }
     const bindings = `${element.from.nodeId ? ` source="${xml(cellId(element.from.nodeId))}"` : ''}${element.to.nodeId ? ` target="${xml(cellId(element.to.nodeId))}"` : ''}`
     const route = element.route === 'orthogonal' ? 'edgeStyle=orthogonalEdgeStyle;' : ''

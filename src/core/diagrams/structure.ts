@@ -1,10 +1,10 @@
 import type { SceneElement, ShapeElement, Point, EdgeElement } from '../types.ts'
 import { center, edgePoints } from '../geometry.ts'
 import { wrapText } from '../svg.ts'
-import { DiagramSyntaxError, sourceLines, diagramNode, diagramText, diagramEdge, diagramStroke, finishDiagram, type DiagramResult, type DiagramTemplate, type SourceLine } from './common.ts'
+import { DiagramSyntaxError, DiagramSourceMap, sourceLines, diagramNode, diagramText, diagramEdge, diagramStroke, finishDiagram, type DiagramResult, type DiagramTemplate, type SourceLine } from './common.ts'
 
 type Direction = 'LR' | 'RL' | 'TB' | 'TD' | 'BT'
-interface Box { key: string; title: string; fields: string[]; methods: string[]; stereotype: string; width: number; height: number; x: number; y: number; shape?: ShapeElement['shape']; group?: string; line: number }
+interface Box { key: string; title: string; fields: string[]; methods: string[]; stereotype: string; width: number; height: number; x: number; y: number; shape?: ShapeElement['shape']; group?: string; line: number; sourceLines: number[] }
 interface Link { a: string; b: string; label: string; line: number; op?: string; left?: string; right?: string }
 const ID = '[\\p{L}_][\\p{L}\\p{N}_-]*'
 const ident = new RegExp(`^${ID}$`, 'u')
@@ -23,9 +23,10 @@ function addBox(boxes: Map<string, Box>, key: string, line: number): Box {
   let box = boxes.get(key)
   if (!box) {
     if (boxes.size >= 100) fail('此类图表最多支持 100 个节点。', line)
-    box = { key, title: key, fields: [], methods: [], stereotype: '', width: 200, height: 72, x: 0, y: 0, line }
+    box = { key, title: key, fields: [], methods: [], stereotype: '', width: 200, height: 72, x: 0, y: 0, line, sourceLines: [] }
     boxes.set(key, box)
   }
+  box.sourceLines.push(line)
   return box
 }
 function addLink(links: Link[], link: Link): void {
@@ -33,6 +34,7 @@ function addLink(links: Link[], link: Link): void {
   links.push(link)
 }
 function member(box: Box, text: string, line: number): void {
+  box.sourceLines.push(line)
   if (box.fields.length + box.methods.length >= 40) fail('每个节点最多支持 40 个成员或字段。', line)
   if (/^<<[^<>]+>>$/.test(text)) { box.stereotype = text; return }
   if (!text || /[{}]/.test(text)) fail('成员语法不完整；不支持嵌套块。', line)
@@ -117,7 +119,18 @@ function marker(edge: EdgeElement, elements: SceneElement[], side: 'start' | 'en
   const points2 = kind === 'triangle' ? [p, at(18, 9), at(18, -9)] : [p, at(10, 6), at(20, 0), at(10, -6)]
   elements.push(diagramStroke(id, points2, { fill: kind === 'diamond' ? '#334155' : '#ffffff', strokeWidth: 1.5 }, true))
 }
+function mapStructureSources(sources: DiagramSourceMap, boxes: Map<string, Box>, nodes: Map<string, ShapeElement>, elements: SceneElement[], links: Link[], prefix: string, groups?: Map<string, Group>): void {
+  const members = new Map<string, string[]>()
+  for (const element of elements) if (element.groupId) members.set(element.groupId, [...(members.get(element.groupId) ?? []), element.id])
+  for (const box of boxes.values()) {
+    const node = nodes.get(box.key)!
+    for (const line of box.sourceLines) sources.add(line, ...(node.groupId ? members.get(node.groupId)! : [node.id]))
+  }
+  links.forEach((link, i) => { const id = `${prefix}-edge-${i}`; sources.set(link.line, ...elements.filter(element => element.id === id || element.id.startsWith(`${id}-`)).map(element => element.id)) })
+  if (groups) [...groups.values()].forEach((group, i) => sources.add(group.line, `${prefix}-group-${i}`))
+}
 function compileClass(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), links: Link[] = []; let active: Box | undefined, opening = 1, direction: Direction = 'TB'
   const relationRE = new RegExp(`^(${ID})(?:\\s+"([^"\\n]*)")?\\s*(<\\|--|--\\|>|<\\|\\.\\.|\\.\\.\\|>|\\*--|--\\*|o--|--o|<-->|<\\.\\.>|-->|<--|\\.\\.>|<\\.\\.|--|\\.\\.)\\s*(?:"([^"\\n]*)"\\s+)?(${ID})(?:\\s*:\\s*(.+))?$`, 'u')
   for (const entry of lines.slice(1)) {
@@ -156,9 +169,11 @@ function compileClass(lines: SourceLine[]): DiagramResult {
     if (inheritance) marker(edge, elements, 'end', 'triangle', `${edge.id}-inheritance`)
     if (diamond) marker(edge, elements, op.startsWith('*') || op.startsWith('o') ? 'start' : 'end', op.includes('*') ? 'diamond' : 'hollow', `${edge.id}-composition`)
   })
-  return finishDiagram('class', elements, links.some(link => /[|*o]/.test(link.op ?? '')) ? ['继承、组合和聚合端标为静态装饰；创建可编辑副本后，移动类卡片不会自动重算这些端标。'] : [])
+  mapStructureSources(sources, boxes, nodes, elements, links, 'class')
+  return finishDiagram('class', elements, links.some(link => /[|*o]/.test(link.op ?? '')) ? ['继承、组合和聚合端标为静态装饰；创建可编辑副本后，移动类卡片不会自动重算这些端标。'] : [], sources)
 }
 function compileState(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), links: Link[] = []; let direction: Direction = 'TB'
   const token = `(?:${ID}|\\[\\*\\])`
   for (const entry of lines.slice(1)) {
@@ -199,7 +214,8 @@ function compileState(lines: SourceLine[]): DiagramResult {
     }
   }
   links.forEach((link, i) => elements.push(diagramEdge(`state-edge-${i}`, endpoint(nodes.get(link.a)!), endpoint(nodes.get(link.b)!), link.label, { route: 'orthogonal' })))
-  return finishDiagram('state', elements)
+  mapStructureSources(sources, boxes, nodes, elements, links, 'state')
+  return finishDiagram('state', elements, [], sources)
 }
 function crowfoot(edge: EdgeElement, elements: SceneElement[], side: 'start' | 'end', symbol: string, id: string): void {
   const points = edgePoints(edge, { elements, background: '#ffffff', grid: false })
@@ -212,6 +228,7 @@ function crowfoot(edge: EdgeElement, elements: SceneElement[], side: 'start' | '
   else elements.push(diagramStroke(`${id}-required`, [at(24, -8), at(24, 8)], { strokeWidth: 1.5 }))
 }
 function compileER(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), links: Link[] = []; let active: Box | undefined, opening = 1, direction: Direction = 'LR'
   for (const entry of lines.slice(1)) {
     const text = entry.text.trim(), line = entry.line; let m: RegExpMatchArray | null
@@ -220,7 +237,7 @@ function compileER(lines: SourceLine[]): DiagramResult {
       if (!(m = text.match(/^([\p{L}_][\p{L}\p{N}_()[\]-]*)\s+([\p{L}_][\p{L}\p{N}_-]*)(?:\s+((?:PK|FK|UK)(?:\s*,\s*(?:PK|FK|UK))*))?(?:\s+("(?:[^"\\]|\\.)*"))?$/u))) fail('实体属性格式应为：类型 名称 [PK, FK, UK] ["说明"]。', line)
       const label = `${m[1]}    ${m[2]}${m[3] ? `    [${m[3].replace(/\s/g, '')}]` : ''}${m[4] ? `  ${value(m[4], line)}` : ''}`
       if (active.fields.length >= 40) fail('每个实体最多支持 40 个属性。', line)
-      active.fields.push(label); continue
+      active.sourceLines.push(line); active.fields.push(label); continue
     }
     if ((m = text.match(/^direction\s+(LR|RL|TB|TD|BT)$/))) { direction = m[1] as Direction; continue }
     if ((m = text.match(new RegExp(`^(${ID})(?:\\s*\\[\\s*("(?:[^"\\\\]|\\\\.)*")\\s*\\])?\\s*\\{$`, 'u')))) { active = addBox(boxes, m[1]!, line); if (m[2]) active.title = value(m[2], line); opening = line; continue }
@@ -240,7 +257,8 @@ function compileER(lines: SourceLine[]): DiagramResult {
     const edge = diagramEdge(`er-edge-${i}`, endpoint(nodes.get(link.a)!), endpoint(nodes.get(link.b)!), link.label, { arrow: 'none', style: { dashed: link.op === '..' } }); elements.push(edge)
     crowfoot(edge, elements, 'start', link.left!, `${edge.id}-left`); crowfoot(edge, elements, 'end', link.right!, `${edge.id}-right`)
   })
-  return finishDiagram('er', elements, links.length ? ['ER 基数端标为静态装饰；创建可编辑副本后，移动实体卡片不会自动重算这些端标。'] : [])
+  mapStructureSources(sources, boxes, nodes, elements, links, 'er')
+  return finishDiagram('er', elements, links.length ? ['ER 基数端标为静态装饰；创建可编辑副本后，移动实体卡片不会自动重算这些端标。'] : [], sources)
 }
 interface Commit { id: string; branch: string; parents: string[]; tag: string; type: string; line: number }
 function gitOptions(text: string, line: number): Record<string, string> {
@@ -255,10 +273,11 @@ function gitOptions(text: string, line: number): Record<string, string> {
   return result
 }
 function compileGit(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const header = lines[0]!, hm = header.text.trim().match(/^gitGraph(?:\s+(LR|RL|TB|BT))?\s*:?$/)
   if (!hm) fail('gitGraph 标题支持 LR、RL、TB、BT 方向。', header.line)
   const direction = (hm[1] ?? 'LR') as Direction
-  const branches = new Map<string, { head?: string; order: number; index: number }>([['main', { order: 0, index: 0 }]])
+  const branches = new Map<string, { head?: string; order: number; index: number; lines: number[] }>([['main', { order: 0, index: 0, lines: [] }]])
   const commits: Commit[] = [], ids = new Set<string>(); let current = 'main'
   const commit = (options: Record<string, string>, line: number, extra?: string): void => {
     if (commits.length >= 150) fail('gitGraph 最多支持 150 次提交。', line)
@@ -277,9 +296,9 @@ function compileGit(lines: SourceLine[]): DiagramResult {
       if (branches.has(m[1]!)) fail(`分支 ${m[1]} 已存在。`, line)
       const order = m[2] ? Number(m[2]) : branches.size
       if (!Number.isSafeInteger(order) || order > 10000) fail('分支 order 必须是 0–10000 的整数。', line)
-      branches.set(m[1]!, { head: branches.get(current)!.head, order, index: branches.size }); current = m[1]!; continue
+      branches.set(m[1]!, { head: branches.get(current)!.head, order, index: branches.size, lines: [line] }); current = m[1]!; continue
     }
-    if ((m = text.match(new RegExp(`^(?:checkout|switch)\\s+(${ID})$`, 'u')))) { if (!branches.has(m[1]!)) fail(`分支 ${m[1]} 不存在。`, line); current = m[1]!; continue }
+    if ((m = text.match(new RegExp(`^(?:checkout|switch)\\s+(${ID})$`, 'u')))) { if (!branches.has(m[1]!)) fail(`分支 ${m[1]} 不存在。`, line); current = m[1]!; branches.get(current)!.lines.push(line); continue }
     if ((m = text.match(new RegExp(`^merge\\s+(${ID})(?:\\s+(.*))?$`, 'u')))) {
       const other = branches.get(m[1]!)
       if (!other) fail(`合并分支 ${m[1]} 不存在。`, line)
@@ -299,7 +318,8 @@ function compileGit(lines: SourceLine[]): DiagramResult {
     return { x, y }
   }
   const elements: SceneElement[] = [], nodes = new Map<string, ShapeElement>()
-  lanes.forEach(([name], index) => {
+  lanes.forEach(([name, branch], index) => {
+    for (const line of branch.lines) sources.add(line, `git-lane-${index}`, `git-branch-${index}`)
     const start = position(-0.5, index), end = position(commits.length - 0.5, index), color = PALETTE[index % PALETTE.length]!
     elements.push(diagramStroke(`git-lane-${index}`, [start, end], { stroke: color, opacity: 0.28, strokeWidth: 2 }))
     const p = position(direction === 'RL' || direction === 'BT' ? commits.length - 0.4 : -0.6, index)
@@ -314,15 +334,18 @@ function compileGit(lines: SourceLine[]): DiagramResult {
     elements.push(diagramText(`${id}-label`, item.id, p.x - 65, p.y + 23, 130, 28, { fontSize: 12 }))
     if (item.tag) elements.push(diagramNode(`${id}-tag`, item.tag, p.x - 65, p.y - 53, 130, 26, 'rectangle', { fill: '#fef3c7', stroke: '#d97706', fontSize: 12 }))
     for (const element of elements.slice(first)) element.groupId = `${id}-symbol`
+    sources.capture(item.line, elements, first)
+    sources.add(item.line, ...item.parents.map((_, index) => `git-edge-${i}-${index}`))
   })
   const edges: SceneElement[] = []
   commits.forEach((item, i) => item.parents.forEach((parent, index) => edges.push(diagramEdge(`git-edge-${i}-${index}`, endpoint(nodes.get(parent)!), endpoint(nodes.get(item.id)!), '', { route: index ? 'orthogonal' : 'straight', style: { stroke: nodes.get(item.id)!.style.stroke, strokeWidth: 2 } }))))
   // Tracks first, ancestry second, commits last keep dots and labels legible.
   const tracks = lanes.length * 2
   elements.splice(tracks, 0, ...edges)
-  return finishDiagram('gitgraph', elements)
+  return finishDiagram('gitgraph', elements, [], sources)
 }
 function compileRequirement(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), links: Link[] = [], fields = new Map<string, Map<string, string>>()
   let active: Box | undefined, opening = 1
   const allowedTypes = 'requirement|functionalRequirement|interfaceRequirement|performanceRequirement|physicalRequirement|designConstraint|element'
@@ -337,7 +360,7 @@ function compileRequirement(lines: SourceLine[]): DiagramResult {
       if (key === 'verifymethod' && !['analysis', 'inspection', 'test', 'demonstration'].includes(data.toLowerCase())) fail('verifymethod 应为 analysis、inspection、test 或 demonstration。', line)
       const map = fields.get(active.key)!
       if (map.has(key)) fail(`重复的 ${key} 字段。`, line)
-      map.set(key, data); continue
+      active.sourceLines.push(line); map.set(key, data); continue
     }
     if ((m = text.match(new RegExp(`^(${allowedTypes})\\s+(${ID})\\s*\\{$`, 'u')))) {
       if (boxes.has(m[2]!)) fail(`重复的需求节点：${m[2]}。`, line)
@@ -357,7 +380,8 @@ function compileRequirement(lines: SourceLine[]): DiagramResult {
   const elements: SceneElement[] = [], nodes = new Map<string, ShapeElement>()
   for (const box of boxes.values()) nodes.set(box.key, card(box, `requirement-${nodes.size}`, elements, '#fefce8'))
   links.forEach((link, i) => elements.push(diagramEdge(`requirement-edge-${i}`, endpoint(nodes.get(link.a)!), endpoint(nodes.get(link.b)!), `«${link.label}»`, { style: { dashed: link.label !== 'contains' } })))
-  return finishDiagram('requirement', elements)
+  mapStructureSources(sources, boxes, nodes, elements, links, 'requirement')
+  return finishDiagram('requirement', elements, [], sources)
 }
 function wrap(text: string, width: number): string[] {
   const chars = Array.from(text), lines: string[] = []
@@ -407,11 +431,12 @@ function groupElements(groups: Map<string, Group>, prefix: string, groupBounds: 
   })
 }
 function compileC4(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), groups = new Map<string, Group>(), links: Link[] = [], kinds = new Map<string, string>(), stack: string[] = []
   let title = ''
   for (const entry of lines.slice(1)) {
     const text = entry.text.trim(), line = entry.line; let m: RegExpMatchArray | null
-    if ((m = text.match(/^title\s+(.+)$/))) { if (title) fail('title 只能声明一次。', line); title = value(m[1]!, line); continue }
+    if ((m = text.match(/^title\s+(.+)$/))) { if (title) fail('title 只能声明一次。', line); title = value(m[1]!, line); sources.add(line, 'c4-title'); continue }
     if (text === '}') { if (!stack.pop()) fail('出现了多余的右花括号。', line); continue }
     if (!(m = text.match(/^([A-Za-z_]+)\s*\((.*)\)\s*(\{)?$/))) fail('不支持此 C4 语法。请使用 Person、System、边界和 Rel 函数。', line)
     const name = m[1]!, list = args(m[2]!, line), key = list[0]!
@@ -452,13 +477,15 @@ function compileC4(lines: SourceLine[]): DiagramResult {
   links.forEach((link, i) => elements.push(diagramEdge(`c4-edge-${i}`, endpoint(nodes.get(link.a)!), endpoint(nodes.get(link.b)!), link.label, { arrow: link.op === 'BiRel' ? 'both' : 'end', style: { dashed: true } })))
   const warnings = ['C4Context 使用本地简化人物/系统符号与自动布局；边界保留分组，未实现 C4 官方样式配置。']
   if (links.some(link => /^Rel_[UDLR]$/.test(link.op ?? ''))) warnings.push('Rel_U/D/L/R 的方向提示由自动布局统一处理；关系起点、终点及标签保持不变。')
-  return finishDiagram('c4', elements, warnings)
+  mapStructureSources(sources, boxes, nodes, elements, links, 'c4', groups)
+  return finishDiagram('c4', elements, warnings, sources)
 }
 type Port = 'L' | 'R' | 'T' | 'B'
 function port(node: ShapeElement, side: Port): Point {
   return { x: node.x + (side === 'L' ? 0 : side === 'R' ? node.width : node.width / 2), y: node.y + (side === 'T' ? 0 : side === 'B' ? node.height : node.height / 2) }
 }
 function compileArchitecture(lines: SourceLine[]): DiagramResult {
+  const sources = new DiagramSourceMap(lines)
   const boxes = new Map<string, Box>(), groups = new Map<string, Group>(), icons = new Map<string, string>()
   const links: (Link & { fromPort: Port; toPort: Port })[] = []
   for (const entry of lines.slice(1)) {
@@ -499,7 +526,8 @@ function compileArchitecture(lines: SourceLine[]): DiagramResult {
     // Explicit unbound endpoints preserve the requested L/R/T/B ports exactly.
     elements.push(diagramEdge(`architecture-edge-${i}`, port(a, reverse ? link.toPort : link.fromPort), port(b, reverse ? link.fromPort : link.toPort), '', { arrow: link.op === '--' ? 'none' : link.op === '<-->' ? 'both' : 'end', route: 'orthogonal' }))
   })
-  return finishDiagram('architecture', elements, ['架构图标使用本地基础图形与图标名称，不下载远程 logos；端口连接保留精确 L/R/T/B 坐标，转换为画布后为自由端点。'])
+  mapStructureSources(sources, boxes, nodes, elements, links, 'architecture', groups)
+  return finishDiagram('architecture', elements, ['架构图标使用本地基础图形与图标名称，不下载远程 logos；端口连接保留精确 L/R/T/B 坐标，转换为画布后为自由端点。'], sources)
 }
 export function compileStructureDiagram(source: string): DiagramResult | undefined {
   const lines = sourceLines(source), header = lines[0]?.text.trim() ?? ''
@@ -638,13 +666,13 @@ Rel(web, payment, "创建支付")` },
   { kind: 'architecture', id: 'architecture-services', title: '服务分层架构', description: '真实分组与 L/R/T/B 端口连接', category: '系统架构', source: `architecture-beta
 group api(cloud)[应用服务]
 group data(database)[数据服务]
-service frontend(logos:react)[前端应用] in api
+service frontend(server)[前端应用] in api
 service backend(server)[业务服务] in api
 service auth(server)[身份认证] in api
-service postgres(database)[PostgreSQL] in data
-service redis(disk)[Redis 缓存] in data
+service storage(database)[业务数据] in data
+service cache(disk)[缓存服务] in data
 frontend:R --> L:backend
 backend:R --> L:auth
-backend:B --> T:postgres
-backend:B --> T:redis` },
+backend:B --> T:storage
+backend:B --> T:cache` },
 ]
