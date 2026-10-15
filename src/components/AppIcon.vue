@@ -1,6 +1,7 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 })
 const paths: Record<string, string> = {
+  'grid-dots': 'M5 5h.01M12 5h.01M19 5h.01M5 12h.01M12 12h.01M19 12h.01M5 19h.01M12 19h.01M19 19h.01',
   triangle: 'm12 3 10 18H2z', hexagon: 'm7 3 10 0 5 9-5 9H7l-5-9z', star: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z', parallelogram: 'M7 4h15l-5 16H2z',
   cylinder: 'M3 6c0-4 18-4 18 0s-18 4-18 0v12c0 4 18 4 18 0V6', cloud: 'M6 18a4 4 0 1 1-.5-8A6 6 0 0 1 17 7a5.5 5.5 0 0 1 1 11z',
   palette: 'M12 3a9 9 0 0 0 0 18h1a2 2 0 0 0 1-4c-1-1 0-3 2-3h2a4 4 0 0 0 3-4 9 9 0 0 0-9-7M7 8h.01M12 6h.01M17 9h.01M6 13h.01',

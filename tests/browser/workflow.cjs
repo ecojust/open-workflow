@@ -121,6 +121,15 @@ async function captureDocumentation() {
       }
       await page.evaluate(() => document.fonts.ready)
       await page.screenshot({ path: path.join(folder, `${kind}.png`), fullPage: true, animations: 'disabled' })
+      if (kind === 'flow') {
+        await page.getByTestId('global-style-toggle').click()
+        await expect(page.getByRole('region', { name: '全局线条风格', exact: true })).toBeVisible()
+        await page.screenshot({ path: path.join(folder, 'flow-style.png'), fullPage: true, animations: 'disabled' })
+        await page.getByRole('button', { name: '关闭全局线条设置', exact: true }).click()
+        await page.locator('g[data-element-type="shape"]').first().click({ button: 'right' })
+        await expect(page.getByTestId('canvas-context-menu')).toBeVisible()
+        await page.screenshot({ path: path.join(folder, 'flow-context.png'), fullPage: true, animations: 'disabled' })
+      }
       if (kind === 'board') {
         await page.getByTestId('board-template-toggle').click()
         await expect(page.getByTestId('board-template-panel')).toBeVisible()

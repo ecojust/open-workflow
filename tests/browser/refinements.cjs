@@ -166,8 +166,8 @@ async function main() {
     const cancelled = await savedDocument(page)
     assert.equal(cancelled.scene.elements.find(element => element.type === 'edge').label, '审核通过')
   })
-  await test('adaptive-grid-at-all-zoom-levels', async page => {
-    await page.getByTestId('create-board').click()
+  for (const mode of ['flow', 'board']) await test(`adaptive-grid-${mode}-at-all-zoom-levels`, async page => {
+    await page.getByTestId(`create-${mode}`).click()
     async function inspectGrid() {
       return page.locator('svg.scene-svg').evaluate(svg => {
         const pattern = svg.querySelector('pattern')
@@ -204,6 +204,41 @@ async function main() {
     assert.ok(checks[1].scale < checks[0].scale / 2, 'The zoom-out gesture must actually change scale')
     assert.ok(checks[2].scale > checks[0].scale * 2, 'The zoom-in gesture must actually change scale')
     await page.getByTitle('重置为 100%', { exact: true }).click()
+
+    await draw(page, 'rectangle', [.25, .30], [.48, .49])
+    await labelShape(page, elements(page, 'shape').first(), '网格不会导出')
+    const shapeId = await elements(page, 'shape').first().getAttribute('data-element-id')
+    await page.getByRole('button', { name: '关闭属性面板', exact: true }).click()
+    await expect(page.locator('.properties-panel')).toHaveCount(0)
+    await expect(page.locator('.selection-overlay')).toHaveCount(1)
+    const toggle = page.getByTestId('canvas-grid-toggle')
+    await expect(toggle).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByTestId('canvas-grid')).toHaveCount(0)
+    await expect(page.locator('.selection-overlay')).toHaveCount(1)
+    const hidden = await savedDocument(page)
+    assert.equal(hidden.scene.grid, false, 'Grid can be hidden and saved while a shape is selected and the inspector is closed')
+    assert.equal(hidden.scene.elements[0].id, shapeId)
+    await undo(page)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('canvas-grid')).toBeVisible()
+    assert.equal((await savedDocument(page)).scene.grid, true, 'Undo restores the saved grid visibility')
+    await redo(page)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    assert.equal((await savedDocument(page)).scene.grid, false)
+    await toggle.click()
+    await expect(page.getByTestId('canvas-grid')).toBeVisible()
+    await page.getByTitle('导出', { exact: true }).click()
+    const exported = await download(page, () => page.getByRole('menuitem', { name: 'SVG 矢量图', exact: true }).click())
+    const svg = await page.evaluate(markup => {
+      const document = new DOMParser().parseFromString(markup, 'image/svg+xml')
+      return { error: document.querySelector('parsererror')?.textContent, patterns: document.querySelectorAll('pattern').length, labels: [...document.querySelectorAll('text')].map(text => text.textContent) }
+    }, exported.bytes.toString('utf8'))
+    assert.equal(svg.error, undefined)
+    assert.ok(svg.labels.includes('网格不会导出'), 'SVG exports the selected drawing content')
+    assert.equal(svg.patterns, 0, 'Visible editor grid is excluded from the exported SVG')
     await assertFits(page)
   })
   await test('global-line-style-existing-new-and-history', async page => {
