@@ -1,0 +1,1578 @@
+{
+  "format": "open-workflow",
+  "version": 1,
+  "id": "delivery-workflow-light",
+  "title": "产品交付 · 从想法到上线",
+  "kind": "flow",
+  "scene": {
+    "elements": [
+      {
+        "id": "phase-1",
+        "type": "shape",
+        "shape": "frame",
+        "x": 0,
+        "y": 130,
+        "width": 460,
+        "height": 520,
+        "text": "01   发现与定义",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#fbfcff",
+          "strokeWidth": 1.5,
+          "fontSize": 23,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "phase-2",
+        "type": "shape",
+        "shape": "frame",
+        "x": 490,
+        "y": 130,
+        "width": 460,
+        "height": 520,
+        "text": "02   设计与验证",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "#fbfcff",
+          "strokeWidth": 1.5,
+          "fontSize": 23,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "phase-3",
+        "type": "shape",
+        "shape": "frame",
+        "x": 980,
+        "y": 130,
+        "width": 460,
+        "height": 520,
+        "text": "03   交付与复盘",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#fbfcff",
+          "strokeWidth": 1.5,
+          "fontSize": 23,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e01",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "interview"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "backlog"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e02",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "insights"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "backlog"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e03",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "backlog"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "goal"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e04",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "goal"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "clarify"
+        },
+        "label": "待补充",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e05",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "clarify"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "backlog"
+        },
+        "label": "再梳理",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e06-0",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "goal"
+        },
+        "to": {
+          "x": 475,
+          "y": 500
+        },
+        "label": "立项",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e06-1",
+        "type": "edge",
+        "from": {
+          "x": 475,
+          "y": 500
+        },
+        "to": {
+          "x": 475,
+          "y": 240
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e06-2",
+        "type": "edge",
+        "from": {
+          "x": 475,
+          "y": 240
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "design"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e07",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "design"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "prototype"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e08",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "design"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "technical"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e09",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "prototype"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "review"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e10",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "technical"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "review"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e11",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "review"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "iterate"
+        },
+        "label": "需调整",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e12-0",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "iterate"
+        },
+        "to": {
+          "x": 505,
+          "y": 616
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e12-1",
+        "type": "edge",
+        "from": {
+          "x": 505,
+          "y": 616
+        },
+        "to": {
+          "x": 505,
+          "y": 240
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e12-2",
+        "type": "edge",
+        "from": {
+          "x": 505,
+          "y": 240
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "design"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e13-0",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "review"
+        },
+        "to": {
+          "x": 965,
+          "y": 500
+        },
+        "label": "通过",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e13-1",
+        "type": "edge",
+        "from": {
+          "x": 965,
+          "y": 500
+        },
+        "to": {
+          "x": 965,
+          "y": 240
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e13-2",
+        "type": "edge",
+        "from": {
+          "x": 965,
+          "y": 240
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "develop"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e14",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "develop"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "tests"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e15",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "tests"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "accept"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e16",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "accept"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "fix"
+        },
+        "label": "未通过",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e17-0",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "fix"
+        },
+        "to": {
+          "x": 995,
+          "y": 522
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e17-1",
+        "type": "edge",
+        "from": {
+          "x": 995,
+          "y": 522
+        },
+        "to": {
+          "x": 995,
+          "y": 185
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e17-2",
+        "type": "edge",
+        "from": {
+          "x": 995,
+          "y": 185
+        },
+        "to": {
+          "x": 1320,
+          "y": 185
+        },
+        "label": "",
+        "arrow": "none",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e17-3",
+        "type": "edge",
+        "from": {
+          "x": 1320,
+          "y": 185
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "tests"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": true,
+          "roughness": "clean",
+          "strokePattern": "dashed"
+        },
+        "locked": false
+      },
+      {
+        "id": "e18",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "accept"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "release"
+        },
+        "label": "通过",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "e19",
+        "type": "edge",
+        "from": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "release"
+        },
+        "to": {
+          "x": 0,
+          "y": 0,
+          "nodeId": "metrics"
+        },
+        "label": "",
+        "arrow": "end",
+        "route": "orthogonal",
+        "style": {
+          "stroke": "#8495ae",
+          "fill": "none",
+          "strokeWidth": 1.8,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "title",
+        "type": "shape",
+        "shape": "text",
+        "x": 0,
+        "y": 0,
+        "width": 850,
+        "height": 60,
+        "text": "从想法到上线",
+        "style": {
+          "stroke": "#26334a",
+          "fill": "none",
+          "strokeWidth": 0,
+          "fontSize": 44,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "subtitle",
+        "type": "shape",
+        "shape": "text",
+        "x": 2,
+        "y": 65,
+        "width": 930,
+        "height": 42,
+        "text": "产品交付工作流  /  把需求、验证与持续改进连接起来",
+        "style": {
+          "stroke": "#718096",
+          "fill": "none",
+          "strokeWidth": 0,
+          "fontSize": 21,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "badge-1",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 1080,
+        "y": 18,
+        "width": 135,
+        "height": 36,
+        "text": "3 个阶段",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#e7f0ff",
+          "strokeWidth": 0,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "badge-2",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 1230,
+        "y": 18,
+        "width": 210,
+        "height": 36,
+        "text": "共同目标 · 持续迭代",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 0,
+          "fontSize": 16,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "interview",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 30,
+        "y": 205,
+        "width": 180,
+        "height": 70,
+        "text": "用户访谈\n使用场景与痛点",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#e7f0ff",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "insights",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 250,
+        "y": 205,
+        "width": 180,
+        "height": 70,
+        "text": "数据观察\n反馈与行为线索",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#e7f0ff",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "backlog",
+        "type": "shape",
+        "shape": "cylinder",
+        "x": 130,
+        "y": 330,
+        "width": 200,
+        "height": 76,
+        "text": "需求池",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#e7f0ff",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "goal",
+        "type": "shape",
+        "shape": "diamond",
+        "x": 140,
+        "y": 445,
+        "width": 180,
+        "height": 110,
+        "text": "目标明确？",
+        "style": {
+          "stroke": "#9a7132",
+          "fill": "#fff2ce",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "clarify",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 130,
+        "y": 595,
+        "width": 200,
+        "height": 42,
+        "text": "待澄清 · 补充证据",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "#fce8ee",
+          "strokeWidth": 1.8,
+          "fontSize": 17,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "design",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 620,
+        "y": 205,
+        "width": 200,
+        "height": 70,
+        "text": "方案设计\n体验路径与技术边界",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "#f0e8ff",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "prototype",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 520,
+        "y": 330,
+        "width": 180,
+        "height": 76,
+        "text": "交互原型\n关键与异常路径",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "#f0e8ff",
+          "strokeWidth": 1.8,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "technical",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 740,
+        "y": 330,
+        "width": 180,
+        "height": 76,
+        "text": "技术验证\n接口与性能预研",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "#f0e8ff",
+          "strokeWidth": 1.8,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "review",
+        "type": "shape",
+        "shape": "diamond",
+        "x": 630,
+        "y": 445,
+        "width": 180,
+        "height": 110,
+        "text": "评审通过？",
+        "style": {
+          "stroke": "#9a7132",
+          "fill": "#fff2ce",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "iterate",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 620,
+        "y": 595,
+        "width": 200,
+        "height": 42,
+        "text": "调整方案 · 再验证",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "#fce8ee",
+          "strokeWidth": 1.8,
+          "fontSize": 17,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "develop",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 1010,
+        "y": 205,
+        "width": 180,
+        "height": 70,
+        "text": "开发联调\n按迭代持续交付",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 1.8,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "tests",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 1230,
+        "y": 205,
+        "width": 180,
+        "height": 70,
+        "text": "自动化测试\n回归与兼容检查",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 1.8,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "accept",
+        "type": "shape",
+        "shape": "diamond",
+        "x": 1120,
+        "y": 330,
+        "width": 180,
+        "height": 110,
+        "text": "验收通过？",
+        "style": {
+          "stroke": "#9a7132",
+          "fill": "#fff2ce",
+          "strokeWidth": 1.8,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "fix",
+        "type": "shape",
+        "shape": "rectangle",
+        "x": 1010,
+        "y": 490,
+        "width": 180,
+        "height": 64,
+        "text": "问题修复\n复现与回归",
+        "style": {
+          "stroke": "#ad5971",
+          "fill": "#fce8ee",
+          "strokeWidth": 1.8,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "release",
+        "type": "shape",
+        "shape": "ellipse",
+        "x": 1230,
+        "y": 490,
+        "width": 180,
+        "height": 64,
+        "text": "发布交付",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 1.8,
+          "fontSize": 21,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "metrics",
+        "type": "shape",
+        "shape": "cylinder",
+        "x": 1110,
+        "y": 572,
+        "width": 200,
+        "height": 64,
+        "text": "指标与反馈",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 1.8,
+          "fontSize": 17,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "brace",
+        "type": "shape",
+        "shape": "brace-bottom",
+        "x": 0,
+        "y": 670,
+        "width": 950,
+        "height": 57,
+        "text": "先把问题想清楚，再进入实现",
+        "style": {
+          "stroke": "#718096",
+          "fill": "none",
+          "strokeWidth": 1.7,
+          "fontSize": 18,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "feedback",
+        "type": "shape",
+        "shape": "text",
+        "x": 990,
+        "y": 668,
+        "width": 460,
+        "height": 40,
+        "text": "交付不是终点，反馈开启下一轮",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "none",
+          "strokeWidth": 0,
+          "fontSize": 20,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "working-agreements",
+        "type": "shape",
+        "shape": "text",
+        "x": 0,
+        "y": 743,
+        "width": 500,
+        "height": 40,
+        "text": "协作约定  /  让每次讨论都有下一步",
+        "style": {
+          "stroke": "#26334a",
+          "fill": "none",
+          "strokeWidth": 0,
+          "fontSize": 21,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "note-0",
+        "type": "shape",
+        "shape": "note",
+        "x": 0,
+        "y": 795,
+        "width": 330,
+        "height": 115,
+        "text": "目标对齐\n\n先定义可衡量的成功标准，\n让每个人知道为什么做。",
+        "style": {
+          "stroke": "#9a7132",
+          "fill": "#fff2ce",
+          "strokeWidth": 0,
+          "fontSize": 18,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "note-1",
+        "type": "shape",
+        "shape": "note",
+        "x": 370,
+        "y": 795,
+        "width": 330,
+        "height": 115,
+        "text": "设计同步\n\n原型、接口和异常路径，\n在同一张图上一起评审。",
+        "style": {
+          "stroke": "#416caa",
+          "fill": "#e7f0ff",
+          "strokeWidth": 0,
+          "fontSize": 18,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "note-2",
+        "type": "shape",
+        "shape": "note",
+        "x": 740,
+        "y": 795,
+        "width": 330,
+        "height": 115,
+        "text": "质量门禁\n\n测试、回滚与兼容性，\n在发布之前逐项确认。",
+        "style": {
+          "stroke": "#7857a8",
+          "fill": "#f0e8ff",
+          "strokeWidth": 0,
+          "fontSize": 18,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "note-3",
+        "type": "shape",
+        "shape": "note",
+        "x": 1110,
+        "y": 795,
+        "width": 330,
+        "height": 115,
+        "text": "持续迭代\n\n把反馈和指标带回需求池，\n为下一轮迭代提供依据。",
+        "style": {
+          "stroke": "#347c69",
+          "fill": "#e0f4eb",
+          "strokeWidth": 0,
+          "fontSize": 18,
+          "textAlign": "left",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "title-marker",
+        "type": "stroke",
+        "brush": "highlighter",
+        "points": [
+          {
+            "x": 12,
+            "y": 58
+          },
+          {
+            "x": 83,
+            "y": 61
+          },
+          {
+            "x": 165,
+            "y": 58
+          },
+          {
+            "x": 240,
+            "y": 60
+          },
+          {
+            "x": 310,
+            "y": 58
+          }
+        ],
+        "pressures": [
+          0.55,
+          0.6762206477211845,
+          0.6863946140238523,
+          0.5711680012089801,
+          0.4364796257038108
+        ],
+        "style": {
+          "stroke": "#416caa",
+          "fill": "none",
+          "strokeWidth": 13,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 0.23,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      },
+      {
+        "id": "feedback-underline",
+        "type": "stroke",
+        "brush": "pencil",
+        "points": [
+          {
+            "x": 1015,
+            "y": 710
+          },
+          {
+            "x": 1080,
+            "y": 713
+          },
+          {
+            "x": 1140,
+            "y": 708
+          },
+          {
+            "x": 1210,
+            "y": 712
+          },
+          {
+            "x": 1280,
+            "y": 708
+          },
+          {
+            "x": 1360,
+            "y": 711
+          }
+        ],
+        "pressures": [
+          0.55,
+          0.6762206477211845,
+          0.6863946140238523,
+          0.5711680012089801,
+          0.4364796257038108,
+          0.4061613588005293
+        ],
+        "style": {
+          "stroke": "#347c69",
+          "fill": "none",
+          "strokeWidth": 2,
+          "fontSize": 19,
+          "textAlign": "center",
+          "opacity": 1,
+          "dashed": false,
+          "roughness": "clean",
+          "strokePattern": "solid"
+        },
+        "locked": false
+      }
+    ],
+    "background": "#fbfcff",
+    "grid": true,
+    "defaultStyle": {
+      "stroke": "#26334a",
+      "fill": "#fbfcff",
+      "strokeWidth": 1.8,
+      "fontSize": 19,
+      "textAlign": "center",
+      "opacity": 1,
+      "dashed": false,
+      "roughness": "clean",
+      "strokePattern": "solid"
+    }
+  },
+  "source": "",
+  "createdAt": "2026-10-16T14:59:18.366Z",
+  "updatedAt": "2026-10-16T14:59:18.366Z"
+}

@@ -4,7 +4,12 @@
 
 Open Workflow 提供“画布”和“代码图表”两个入口。流程绘制与自由白板共用画布，可从空白开始，也可插入模板。场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换均由本项目实现。自研设计结论见 [RESEARCH.md](docs/RESEARCH.md)，依赖归属和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-![Open Workflow 工作台](docs/screenshots/home.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/workflow-cover-dark.png">
+  <img src="docs/screenshots/workflow-cover-light.png" alt="产品交付工作流：三个阶段分区、并行任务、判断与返工回路、彩色便签、大括弧及图形属性面板" width="1800">
+</picture>
+
+*真实画布中的产品交付示例：从需求发现、方案验证到发布复盘，结合流程连线、协作便签与手绘标注。[查看可编辑示例画布](docs/examples/product-delivery.owflow)。*
 
 ## 当前功能
 
