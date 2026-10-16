@@ -70,11 +70,18 @@ export interface WorkflowDocument {
   importSource?: { name: string; format: string; text: string }
 }
 export interface ImportedScene { title: string; scene: Scene; warnings: string[] }
-export interface EditorHandle { flush: () => void | Promise<void> }
+export interface EditorHandle { flush: () => void | Promise<void>; hasPendingEdits?: () => boolean }
 export const DEFAULT_STYLE: ElementStyle = {
   stroke: '#334155', fill: '#ffffff', strokeWidth: 2, fontSize: 16,
   textAlign: 'center', opacity: 1, dashed: false, roughness: 'clean', strokePattern: 'solid',
 }
-export function newId(prefix = 'e'): string { return `${prefix}-${crypto.randomUUID()}` }
+export function newId(prefix = 'e'): string {
+  if (typeof crypto.randomUUID === 'function') return `${prefix}-${crypto.randomUUID()}`
+  // Local network pages can use random bytes even when UUID helpers require HTTPS.
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6]! & 15) | 64; bytes[8] = (bytes[8]! & 63) | 128
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${prefix}-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 export function emptyScene(): Scene { return { elements: [], background: '#ffffff', grid: true, defaultStyle: { ...DEFAULT_STYLE } } }
 export function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }

@@ -6,6 +6,8 @@ import { ref, computed, markRaw, nextTick } from 'vue'
 import { clone, newId } from '../src/core/types.ts'
 import { contentKey, createDocument, DocumentHistory, MAX_FILE_BYTES, validateDocument } from '../src/core/documents.ts'
 import { documentBytes, safeFilename } from '../src/core/files.ts'
+import { SharedDocumentSync } from '../src/core/share-sync.ts'
+import { sharedContentKey, sharedDocument, validateSharedSnapshot } from '../src/core/sharing.ts'
 
 // Execute the real setup code. Only browser/native IO and mounted child editors are
 // substituted; lifecycle functions are neither copied nor reimplemented here.
@@ -14,7 +16,7 @@ assert.ok(source, 'App.vue must expose its real setup script to this regression 
 const script = ts.transpileModule(source.replace(/^import[^\n]*\n/gm, ''), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText
-const exposed = 'tabs,activeId,home,recent,busy,modal,editor,toast,addDocument,activate,save,closeTab,nativeClose,unload,pageHide,persist,commit,dirty,historyAction,finishModal,openRecent,autoSaveEnabled,setAutoSave'
+const exposed = 'tabs,activeId,home,recent,busy,modal,editor,toast,addDocument,activate,save,closeTab,nativeClose,unload,pageHide,persist,commit,dirty,historyAction,finishModal,openRecent,autoSaveEnabled,setAutoSave,startSharing,stopSharing,retrySharing,serverStatus,serverSyncState'
 
 function deferred() {
   let resolve, reject
@@ -30,9 +32,12 @@ function harness(options = {}) {
   const local = new Map(Object.entries(options.local || {}))
   const timers = new Map(), timerDelays = new Map(), mounted = [], deleted = [], saved = [], downloads = []
   let timerId = 0, closed = 0
+  let serverSnapshot
+  const serverStops = []
   const fakeWindow = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {} }
   const environment = {
     ref, computed, markRaw, nextTick, clone, newId, contentKey, createDocument, DocumentHistory, MAX_FILE_BYTES, validateDocument, documentBytes, safeFilename,
+    SharedDocumentSync, sharedContentKey, sharedDocument, validateSharedSnapshot,
     onMounted: callback => mounted.push(callback), onBeforeUnmount: () => {},
     window: fakeWindow, document: { activeElement: null },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value) },
@@ -45,6 +50,18 @@ function harness(options = {}) {
     onNativeCloseRequest: async () => () => {},
     saveNativeFile: async request => { saved.push(request); return options.nativeSave ? options.nativeSave(request) : { name: request.suggestedName, path: '/test/file.owflow', stamp: 'new-stamp' } },
     downloadBytes: (...args) => downloads.push(args),
+    startDocumentServer: async document => {
+      if (options.serverStart) return options.serverStart(document)
+      serverSnapshot = { sessionId: 'test-session', revision: 1, document: sharedDocument(document) }
+      return { status: { running: true, sessionId: serverSnapshot.sessionId, urls: ['http://127.0.0.1:1234/#/share/test'], documentId: document.id, title: document.title }, snapshot: clone(serverSnapshot) }
+    },
+    readDocumentServer: async () => clone(serverSnapshot),
+    writeDocumentServer: async request => {
+      if (request.baseRevision !== serverSnapshot.revision) return { accepted: false, snapshot: clone(serverSnapshot) }
+      serverSnapshot = { ...serverSnapshot, revision: serverSnapshot.revision + 1, document: sharedDocument(request.document) }
+      return { accepted: true, snapshot: clone(serverSnapshot) }
+    },
+    stopDocumentServer: async sessionId => { serverStops.push(sessionId); return options.serverStop ? options.serverStop(serverSnapshot) : clone(serverSnapshot) },
   }
   const app = Function(...Object.keys(environment), `${script}\nreturn {${exposed}}`)(...Object.values(environment))
   function runTimers(delay = 300) {
@@ -52,9 +69,71 @@ function harness(options = {}) {
       timers.delete(id); timerDelays.delete(id); callback()
     }
   }
-  return { app, records, local, deleted, saved, downloads, mounted, timers, runTimers, closed: () => closed }
+  return { app, records, local, deleted, saved, downloads, mounted, timers, runTimers, serverStops, serverSnapshot: () => clone(serverSnapshot), closed: () => closed }
 }
 function record(document, saved = false) { return { id: document.id, document: clone(document), savedKey: saved ? contentKey(document) : null, lastOpened: 100 } }
+
+test('sharing continues to synchronize edits while local draft autosave is disabled', async () => {
+  const { app, records, serverSnapshot } = harness({ desktop: true })
+  const doc = createDocument('flow'), tab = app.addDocument(doc, contentKey(doc))
+  await app.setAutoSave(false); await app.startSharing()
+  try {
+    app.commit(tab, document => { document.title = '共享中的修改' }, '改名')
+    await app.retrySharing()
+    assert.equal(serverSnapshot().document.title, '共享中的修改')
+    assert.equal(records.size, 0, 'Network synchronization does not silently enable local draft storage')
+  } finally { await app.stopSharing() }
+})
+
+test('stopping a service incorporates its final accepted remote snapshot and retains local import data', async () => {
+  const { app } = harness({ desktop: true, serverStop: async snapshot => ({ ...snapshot, revision: snapshot.revision + 1, document: { ...snapshot.document, title: '停服前最后一次网页修改' } }) })
+  const doc = createDocument('flow'); doc.importSource = { name: 'source.xml', format: 'xml', text: '<original/>' }
+  const tab = app.addDocument(doc, contentKey(doc))
+  await app.startSharing(); await app.stopSharing()
+  assert.equal(tab.document.title, '停服前最后一次网页修改')
+  assert.deepEqual(tab.document.importSource, doc.importSource)
+  assert.equal(tab.history.canUndo, false, 'Remote revisions establish a new undo baseline')
+  assert.equal(app.serverStatus.value.running, false)
+})
+
+test('a local edit while stop is pending preserves both the local and final remote versions', async () => {
+  const pending = deferred(); let final
+  const { app } = harness({ desktop: true, serverStop: async snapshot => { final = { ...snapshot, revision: snapshot.revision + 1, document: { ...snapshot.document, title: '最后网页版本' } }; return pending.promise } })
+  const doc = createDocument('flow'), tab = app.addDocument(doc, contentKey(doc))
+  await app.startSharing()
+  const stopping = app.stopSharing()
+  await settleUntil(() => final)
+  app.commit(tab, document => { document.title = '停服等待时的本地修改' }, '改名')
+  pending.resolve(final); await stopping
+  assert.equal(tab.document.title, '停服等待时的本地修改')
+  assert.equal(app.tabs.value.length, 2)
+  assert.equal(app.tabs.value.find(item => item.document.id !== doc.id).document.title, '最后网页版本 · 网页保留副本')
+  assert.equal(app.activeId.value, doc.id)
+})
+
+test('closing a tab while its service starts immediately stops the orphaned session', async () => {
+  const pending = deferred(); let starting = false
+  const { app, serverStops } = harness({ desktop: true, serverStart: () => { starting = true; return pending.promise }, serverStop: async () => null })
+  const doc = createDocument('flow'), tab = app.addDocument(doc, contentKey(doc))
+  const opening = app.startSharing(); await settleUntil(() => starting)
+  await app.closeTab(tab)
+  pending.resolve({ status: { running: true, sessionId: 'late', urls: [], documentId: doc.id }, snapshot: { sessionId: 'late', revision: 1, document: doc } })
+  await opening
+  assert.deepEqual(serverStops, ['late'])
+  assert.equal(app.tabs.value.length, 0); assert.equal(app.serverStatus.value.running, false)
+})
+
+test('closing a shared tab asks to save a final remote edit accepted during shutdown', async () => {
+  const { app } = harness({ desktop: true, serverStop: async snapshot => ({ ...snapshot, revision: 2, document: { ...snapshot.document, title: '最后网页修改' } }) })
+  const doc = createDocument('flow'), tab = app.addDocument(doc, contentKey(doc))
+  await app.startSharing()
+  const closing = app.closeTab(tab)
+  await settleUntil(() => app.modal.value?.title.includes('最后网页修改'))
+  assert.equal(app.tabs.value.length, 1)
+  app.finishModal('cancel'); await closing
+  assert.equal(tab.document.title, '最后网页修改'); assert.equal(app.tabs.value.length, 1)
+  assert.equal(app.serverStatus.value.running, false)
+})
 
 test('closing the same clean tab twice cannot close a different document', async () => {
   const { app } = harness()

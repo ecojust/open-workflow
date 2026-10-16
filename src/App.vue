@@ -3,6 +3,7 @@ import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref } from 'vu
 import AppIcon from './components/AppIcon.vue'
 import SceneEditor from './components/SceneEditor.vue'
 import CodeDiagramEditor from './components/CodeDiagramEditor.vue'
+import ServerControl from './components/ServerControl.vue'
 import { clone, newId } from './core/types.ts'
 import type { DocumentKind, EditorHandle, Scene, WorkflowDocument } from './core/types.ts'
 import { contentKey, createDocument, DocumentHistory, MAX_FILE_BYTES, validateDocument } from './core/documents.ts'
@@ -11,7 +12,9 @@ import type { DraftRecord } from './core/storage.ts'
 import { documentBytes, downloadBytes, exportDocument, fileAccept, importText, safeFilename } from './core/files.ts'
 import type { ExportFormat } from './core/files.ts'
 import { normalizeDiagramStyle, type DiagramStyleId } from './core/diagram-appearance.ts'
-import { closeNativeWindow, isDesktop, onNativeCloseRequest, openNativeFiles, saveNativeFile } from './native.ts'
+import { closeNativeWindow, isDesktop, onNativeCloseRequest, openNativeFiles, saveNativeFile, startDocumentServer, readDocumentServer, writeDocumentServer, stopDocumentServer } from './native.ts'
+import { sharedContentKey, sharedDocument, validateSharedSnapshot, type ServerStatus, type SharedSnapshot } from './core/sharing.ts'
+import { SharedDocumentSync } from './core/share-sync.ts'
 
 interface Tab {
   document: WorkflowDocument; history: Pick<DocumentHistory, 'canUndo' | 'canRedo' | 'commit' | 'undo' | 'redo'>; savedKey: string | null
@@ -41,6 +44,13 @@ const theme = ref<'light' | 'dark' | 'system'>('system')
 const systemDark = ref(false)
 const collapsed = ref(false)
 const autoSaveEnabled = ref(true)
+const serverStatus = ref<ServerStatus>({ running: false, urls: [] })
+const serverBusy = ref(false)
+const serverError = ref('')
+const serverSyncState = ref<{ status: string; error?: string; conflict?: SharedSnapshot }>({ status: 'stopped' })
+let sharedSync: SharedDocumentSync | undefined
+let sharingGeneration = 0
+let serverStopPending: Promise<void> | undefined
 const effectiveTheme = computed(() => theme.value === 'system' ? systemDark.value ? 'dark' : 'light' : theme.value)
 const active = computed(() => tabs.value.find(tab => tab.document.id === activeId.value))
 const visibleRecent = computed(() => recent.value.filter(entry => `${entry.document.title} ${kindName(entry.document.kind)}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => b.lastOpened - a.lastOpened))
@@ -149,13 +159,110 @@ function commit(tab: Tab, updater: (doc: WorkflowDocument) => void, label: strin
     const next = validateDocument(proposed)
     if (contentKey(next) === contentKey(tab.document)) return
     next.updatedAt = new Date().toISOString(); tab.document = next; tab.revision++; tab.history.commit(next)
-    scheduleDraft(tab); status.value = label
+    scheduleDraft(tab); publishSharedChange(tab); status.value = label
   } catch (error) { tab.document = clone(tab.document); errorMessage(error) }
 }
 function changeScene(scene: Scene, label = '已修改画布') { if (active.value) commit(active.value, doc => { doc.scene = scene }, label) }
 function changeSource(source: string) { if (active.value) commit(active.value, doc => { doc.source = source }, '已修改图表源码') }
 function changeDiagramStyle(style: DiagramStyleId) {
   if (active.value) commit(active.value, doc => { doc.diagramStyle = normalizeDiagramStyle(style) }, '已修改全局绘图风格')
+}
+function publishSharedChange(tab: Tab) {
+  if (serverStatus.value.documentId !== tab.document.id) return
+  serverStatus.value.title = tab.document.title
+  sharedSync?.localChanged(sharedDocument(tab.document))
+}
+function applySharedDocument(document: WorkflowDocument) {
+  const tab = tabs.value.find(item => item.document.id === serverStatus.value.documentId)
+  if (!tab || document.id !== tab.document.id || document.kind !== tab.document.kind) throw new Error('共享文档已关闭或不匹配。')
+  const next = validateDocument({ ...document, importSource: tab.document.importSource })
+  if (contentKey(next) === contentKey(tab.document)) return
+  tab.document = next; tab.revision++
+  // Remote changes become the next undo baseline, so undo cannot erase another editor's work.
+  tab.history = markRaw(new DocumentHistory(next))
+  serverStatus.value.title = next.title
+  scheduleDraft(tab); status.value = '已同步网页中的修改。'
+}
+async function endSharing() {
+  if (serverStopPending) return serverStopPending
+  const sessionId = serverStatus.value.sessionId
+  if (!sessionId) return
+  const pending = (async () => {
+    await sharedSync?.syncNow()
+    const final = await stopDocumentServer(sessionId)
+    if (activeId.value === serverStatus.value.documentId && !home.value) await flush()
+    const dirtyLocal = sharedSync?.state.dirty ?? false
+    sharingGeneration++; sharedSync?.stop(); sharedSync = undefined
+    try {
+      if (final) {
+        const snapshot = validateSharedSnapshot(final)
+        const tab = tabs.value.find(item => item.document.id === serverStatus.value.documentId)
+        if (tab && sharedContentKey(tab.document) !== sharedContentKey(snapshot.document)) {
+          if (!dirtyLocal) applySharedDocument(snapshot.document)
+          else {
+            const backup = clone(snapshot.document)
+            backup.id = newId('doc'); backup.title = `${backup.title} · 网页保留副本`.slice(0, 200)
+            const previousActive = activeId.value, previousHome = home.value
+            addDocument(backup); activeId.value = previousActive; home.value = previousHome; rememberSession()
+            message('停止共享时存在不同版本，网页中的版本已保留为独立文档。')
+          }
+        }
+      }
+    } finally {
+      serverStatus.value = { running: false, urls: [] }
+      serverSyncState.value = { status: 'stopped' }; serverError.value = ''
+    }
+  })()
+  serverStopPending = pending
+  try { await pending } finally { if (serverStopPending === pending) serverStopPending = undefined }
+}
+async function startSharing() {
+  if (serverBusy.value || !active.value || home.value) return
+  serverBusy.value = true; serverError.value = ''
+  try {
+    await flush()
+    const tab = active.value
+    if (!tab || home.value) return
+    if (serverStatus.value.running && serverStatus.value.documentId === tab.document.id) { await sharedSync?.syncNow(); return }
+    await endSharing()
+    const result = await startDocumentServer(sharedDocument(tab.document))
+    if (!tabs.value.some(item => item.document.id === tab.document.id) || closingWindow.value) {
+      await stopDocumentServer(result.snapshot.sessionId)
+      return
+    }
+    serverStatus.value = result.status
+    const generation = ++sharingGeneration
+    const client = new SharedDocumentSync({
+      read: () => readDocumentServer(result.snapshot.sessionId),
+      write: request => writeDocumentServer(request),
+      applyRemote: document => { if (generation === sharingGeneration) applySharedDocument(document) },
+      canApplyRemote: () => !closing && !closingWindow.value && !modal.value && !(activeId.value === tab.document.id && !home.value && editor.value?.hasPendingEdits?.()),
+      onState: state => { if (generation === sharingGeneration) serverSyncState.value = state },
+    })
+    sharedSync = client; client.start(result.snapshot)
+    // A service start can finish after a local edit; queue the newer document as well.
+    client.localChanged(sharedDocument(tab.document))
+    status.value = 'Server 已开启，可复制局域网地址在网页中编辑。'
+  } catch (error) { serverError.value = error instanceof Error ? error.message : String(error) }
+  finally { serverBusy.value = false }
+}
+async function stopSharing() {
+  if (serverBusy.value) return
+  serverBusy.value = true; serverError.value = ''
+  try { await endSharing(); status.value = 'Server 已停止，原访问地址已失效。' }
+  catch (error) { serverError.value = error instanceof Error ? error.message : String(error) }
+  finally { serverBusy.value = false }
+}
+async function resolveSharing(choice: 'remote' | 'local') {
+  if (serverBusy.value) return
+  serverBusy.value = true
+  try { await flush(); await sharedSync?.resolveConflict(choice) }
+  catch (error) { serverError.value = error instanceof Error ? error.message : String(error) }
+  finally { serverBusy.value = false }
+}
+async function retrySharing() {
+  try { await flush(); await sharedSync?.syncNow() }
+  catch (error) { serverError.value = error instanceof Error ? error.message : String(error) }
 }
 async function copyCodeDiagram(scene: Scene) {
   await flush(); const doc = createDocument('flow'); doc.title = `${active.value?.document.title || '代码图表'} · 可编辑副本`.slice(0, 200); doc.scene = clone(scene); addDocument(doc)
@@ -164,7 +271,7 @@ async function copyCodeDiagram(scene: Scene) {
 async function historyAction(action: 'undo' | 'redo') {
   await flush(); const tab = active.value; if (!tab || home.value) return
   const restored = tab.history[action]()
-  if (restored) { restored.updatedAt = new Date().toISOString(); tab.document = restored; tab.revision++; scheduleDraft(tab); status.value = action === 'undo' ? '已撤销' : '已重做' }
+  if (restored) { restored.updatedAt = new Date().toISOString(); tab.document = restored; tab.revision++; scheduleDraft(tab); publishSharedChange(tab); status.value = action === 'undo' ? '已撤销' : '已重做' }
 }
 async function save(tab = active.value, saveAs = false): Promise<boolean> {
   if (!tab || (busy.value && (!saveCompletion || busy.value !== '正在保存…'))) return false
@@ -283,7 +390,12 @@ async function closeTab(tab: Tab) {
   if (closingTabs.has(id) || busy.value || closing) return
   closingTabs.add(id)
   try {
-    await flush(); const choice = await mayClose(tab); if (choice === 'cancel') return
+    await flush(); let choice = await mayClose(tab); if (choice === 'cancel') return
+    if (serverStatus.value.documentId === id) {
+      const reviewed = contentKey(tab.document)
+      await endSharing()
+      if (contentKey(tab.document) !== reviewed) { choice = await mayClose(tab); if (choice === 'cancel') return }
+    }
     if (choice === 'remove') await removeLocal(id); else if (autoSaveEnabled.value) await persist(tab, true)
     const index = tabs.value.findIndex(item => item.document.id === id)
     if (index < 0) return
@@ -314,6 +426,17 @@ async function nativeClose() {
     for (const tab of [...tabs.value]) {
       const choice = await mayClose(tab); if (choice === 'cancel') return
       choices.push({ tab, choice })
+    }
+    if (serverStatus.value.running) {
+      const reviewed = new Map(tabs.value.map(tab => [tab.document.id, contentKey(tab.document)]))
+      await endSharing()
+      for (const tab of [...tabs.value]) {
+        if (reviewed.get(tab.document.id) === contentKey(tab.document)) continue
+        const choice = await mayClose(tab); if (choice === 'cancel') return
+        const previous = choices.find(item => item.tab.document.id === tab.document.id)
+        if (previous) previous.choice = choice
+        else choices.push({ tab, choice })
+      }
     }
     closingWindow.value = true
     for (const { tab, choice } of choices) {
@@ -378,6 +501,7 @@ onMounted(async () => {
   try { unlisten = await onNativeCloseRequest(() => void nativeClose()) } catch (error) { errorMessage(error) }
 })
 onBeforeUnmount(() => {
+  sharingGeneration++; sharedSync?.stop()
   media?.removeEventListener('change', mediaChange); window.removeEventListener('keydown', keyboard); window.removeEventListener('beforeunload', unload); window.removeEventListener('pagehide', pageHide); unlisten?.(); clearTimeout(toastTimer)
   for (const timer of draftTimers.values()) clearTimeout(timer)
   draftTimers.clear(); autoSaveGeneration++
@@ -393,6 +517,7 @@ onBeforeUnmount(() => {
         <button title="打开文件 (Ctrl+O)" @click="openFiles"><AppIcon name="folder"/><span>打开</span></button>
         <span class="toolbar-divider"></span>
         <button title="保存 (Ctrl+S)" :disabled="!active || home || !!busy" @click="save()"><AppIcon name="save"/><span>保存</span></button>
+        <button class="autosave-switch" role="switch" aria-label="自动保存本地草稿" :aria-checked="autoSaveEnabled" :title="autoSaveEnabled ? '自动保存已开启：仅保存本地草稿' : '自动保存已关闭：可手动保存文件与草稿'" data-testid="autosave-toggle" :disabled="booting || closingWindow" @click="toggleAutoSave"><span>自动保存</span><svg class="switch-track" width="30" height="18" viewBox="0 0 30 18" aria-hidden="true"><rect x="0" y="0" width="30" height="18" rx="9"/><circle :cx="autoSaveEnabled ? 21 : 9" cy="9" r="6"/></svg></button>
         <button class="save-as" title="另存为 (Ctrl+Shift+S)" :disabled="!active || home || !!busy" @click="save(active, true)"><AppIcon name="save-as"/><span>另存为</span></button>
         <button title="导出" :disabled="!active || home || !!busy" :aria-expanded="menu === 'export'" @click="menu = menu === 'export' ? null : 'export'"><AppIcon name="export"/><span>导出</span><AppIcon name="chevron" :size="12"/></button>
         <span class="toolbar-divider"></span>
@@ -400,7 +525,6 @@ onBeforeUnmount(() => {
         <button class="icon-button" title="重做 (Ctrl+Shift+Z)" aria-label="重做" :disabled="home || !active?.history.canRedo" @click="historyAction('redo')"><AppIcon name="redo"/></button>
       </div>
       <div class="toolbar-end">
-        <button class="autosave-switch" role="switch" aria-label="自动保存本地草稿" :aria-checked="autoSaveEnabled" :title="autoSaveEnabled ? '自动保存已开启：仅保存本地草稿' : '自动保存已关闭：可手动保存文件与草稿'" data-testid="autosave-toggle" :disabled="booting || closingWindow" @click="toggleAutoSave"><span>自动保存</span><svg class="switch-track" width="30" height="18" viewBox="0 0 30 18" aria-hidden="true"><rect x="0" y="0" width="30" height="18" rx="9"/><circle :cx="autoSaveEnabled ? 21 : 9" cy="9" r="6"/></svg></button>
         <button class="icon-button" title="切换外观" aria-label="切换外观" :aria-expanded="menu === 'theme'" @click="menu = menu === 'theme' ? null : 'theme'"><AppIcon :name="effectiveTheme === 'dark' ? 'moon' : 'sun'"/></button>
         <button class="icon-button help-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
       </div>
@@ -459,8 +583,12 @@ onBeforeUnmount(() => {
         <button class="tab-add" title="新建文档" aria-label="新建文档" @click="menu = 'new'"><AppIcon name="plus" :size="17"/></button>
         <button class="tab-rename" title="重命名当前文档" aria-label="重命名当前文档" @click="rename(active)"><AppIcon name="rename" :size="15"/></button>
       </div>
-      <CodeDiagramEditor v-if="active.document.kind === 'mermaid'" :key="active.document.id" ref="editor" :source="active.document.source" :diagram-style="active.document.diagramStyle" :theme="effectiveTheme" @change="changeSource" @change-style="changeDiagramStyle" @create-flow="copyCodeDiagram" @status="status = $event"/>
-      <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event" @export="exportAs"/>
+      <CodeDiagramEditor v-if="active.document.kind === 'mermaid'" :key="active.document.id" ref="editor" :source="active.document.source" :diagram-style="active.document.diagramStyle" :theme="effectiveTheme" @change="changeSource" @change-style="changeDiagramStyle" @create-flow="copyCodeDiagram" @status="status = $event" @export="exportAs">
+        <template #server><ServerControl v-if="!modal" :native="native" :status="serverStatus" :document-id="active.document.id" :document-title="active.document.title" :busy="serverBusy" :error="serverError || serverSyncState.error" :sync-phase="serverSyncState.status" :conflict="serverSyncState.status === 'conflict'" @start="startSharing" @stop="stopSharing" @retry="retrySharing" @resolve-conflict="resolveSharing"/></template>
+      </CodeDiagramEditor>
+      <SceneEditor v-else :key="active.document.id" ref="editor" :scene="active.document.scene" :mode="active.document.kind" :theme="effectiveTheme" @change="changeScene" @status="status = $event" @export="exportAs">
+        <template #server><ServerControl v-if="!modal" :native="native" :status="serverStatus" :document-id="active.document.id" :document-title="active.document.title" :busy="serverBusy" :error="serverError || serverSyncState.error" :sync-phase="serverSyncState.status" :conflict="serverSyncState.status === 'conflict'" @start="startSharing" @stop="stopSharing" @retry="retrySharing" @resolve-conflict="resolveSharing"/></template>
+      </SceneEditor>
     </main>
 
     <footer class="status-bar"><span class="status-info">{{ home ? '画布 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error', paused: !autoSaveEnabled }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : !autoSaveEnabled ? 'save' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>

@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { compileCodeDiagram, DiagramSyntaxError, lookupDiagramSource, type CodeDiagramResult } from '../core/code-diagram.ts'
 import { sceneToSvg } from '../core/svg.ts'
 import { combineBounds, edgePoints, elementBounds, pointsPath } from '../core/geometry.ts'
-import { clone, DEFAULT_STYLE, type Scene } from '../core/types.ts'
+import { clone, DEFAULT_STYLE, newId, type Scene } from '../core/types.ts'
 import { DIAGRAM_TEMPLATES, DIAGRAM_KIND_LABELS } from '../core/diagrams/catalog.ts'
 import { applyDiagramStyle, DIAGRAM_STYLES, normalizeDiagramStyle, type DiagramStyleId } from '../core/diagram-appearance.ts'
 import type { DiagramKind, DiagramTemplate } from '../core/diagrams/common.ts'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{ source: string; theme: 'light' | 'dark'; diagramStyle?: DiagramStyleId }>()
-const emit = defineEmits<{ change: [source: string]; changeStyle: [id: DiagramStyleId]; createFlow: [scene: Scene]; status: [message: string] }>()
+const emit = defineEmits<{ change: [source: string]; changeStyle: [id: DiagramStyleId]; createFlow: [scene: Scene]; export: [format: 'png' | 'svg']; status: [message: string] }>()
 const draft = ref(props.source), sourceInput = ref<HTMLTextAreaElement>(), error = ref(''), errorLine = ref(0)
 const compiled = ref<CodeDiagramResult | null>(null), parsing = ref(false), scrollTop = ref(0), zoom = ref(1)
 const compiledSource = ref(''), selection = ref({ start: 0, end: 0, head: 0 })
@@ -19,6 +19,9 @@ type LibraryTemplate = DiagramTemplate & { kind: DiagramKind }
 const templatesOpen = ref(false), templateCategory = ref('all'), templateSearch = ref('')
 const pendingTemplate = ref<LibraryTemplate>(), templateDialog = ref<HTMLElement>(), templateSearchInput = ref<HTMLInputElement>(), templateButton = ref<HTMLButtonElement>()
 const stylesOpen = ref(false), styleDialog = ref<HTMLElement>(), styleButton = ref<HTMLButtonElement>()
+const exportOpen = ref(false), exportControl = ref<HTMLElement>(), exportButton = ref<HTMLButtonElement>(), exportMenu = ref<HTMLElement>()
+const exportMenuId = newId('diagram-image-export')
+const canExport = computed(() => Boolean(compiled.value && !parsing.value && !error.value && compiledSource.value === draft.value))
 const currentStyleId = computed(() => normalizeDiagramStyle(props.diagramStyle))
 const currentStyle = computed(() => DIAGRAM_STYLES.find(style => style.id === currentStyleId.value)!)
 const modalOpen = computed(() => templatesOpen.value || stylesOpen.value)
@@ -89,7 +92,7 @@ const styleExample: Scene = {
 const stylePreviews = DIAGRAM_STYLES.map(style => ({ ...style, svg: sceneToSvg(applyDiagramStyle(styleExample, style.id), { background: true }) }))
 
 async function openStyles() {
-  flush(); templatesOpen.value = false; pendingTemplate.value = undefined; stylesOpen.value = true
+  closeExportMenu(); flush(); templatesOpen.value = false; pendingTemplate.value = undefined; stylesOpen.value = true
   await nextTick()
   const selected = styleDialog.value?.querySelector<HTMLButtonElement>('[data-diagram-style][aria-pressed="true"]')
   selected?.scrollIntoView({ block: 'nearest' }); selected?.focus({ preventScroll: true })
@@ -132,7 +135,7 @@ function styleDialogKeydown(event: KeyboardEvent) {
 }
 
 async function openTemplates() {
-  flush(); stylesOpen.value = false; pendingTemplate.value = undefined; templatesOpen.value = true
+  closeExportMenu(); flush(); stylesOpen.value = false; pendingTemplate.value = undefined; templatesOpen.value = true
   await nextTick(); templateSearchInput.value?.focus({ preventScroll: true })
 }
 function closeTemplates(focusSource = false) {
@@ -170,6 +173,44 @@ function dialogKeydown(event: KeyboardEvent) {
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
 }
+
+async function openExportMenu(last = false) {
+  if (!canExport.value) return
+  exportOpen.value = true
+  await nextTick()
+  const items = exportMenu.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+  items?.[last ? items.length - 1 : 0]?.focus({ preventScroll: true })
+}
+function closeExportMenu(restoreFocus = false) {
+  exportOpen.value = false
+  if (restoreFocus) nextTick(() => exportButton.value?.focus({ preventScroll: true }))
+}
+function toggleExportMenu() { if (exportOpen.value) closeExportMenu(); else void openExportMenu() }
+function chooseImageExport(format: 'png' | 'svg') {
+  if (!canExport.value) { closeExportMenu(); return }
+  flush()
+  if (!canExport.value) { closeExportMenu(); return }
+  closeExportMenu(true)
+  emit('export', format)
+}
+function exportMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeExportMenu(true); return }
+  if (event.key === 'Tab') {
+    event.preventDefault(); event.stopPropagation(); closeExportMenu()
+    nextTick(() => (event.shiftKey ? exportButton.value : sourceInput.value)?.focus({ preventScroll: true }))
+    return
+  }
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault(); event.stopPropagation()
+  const items = [...(exportMenu.value?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])]
+  const index = items.findIndex(item => item === document.activeElement)
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+  items[next]?.focus({ preventScroll: true })
+}
+function closeExportOutside(event: Event) {
+  if (exportOpen.value && event.target instanceof Node && !exportControl.value?.contains(event.target)) closeExportMenu()
+}
+watch(canExport, value => { if (!value) closeExportMenu() })
 
 function publish() { if (draft.value !== published) { published = draft.value; emit('change', draft.value) } }
 function parse() {
@@ -235,18 +276,23 @@ watch(() => props.source, value => {
   clearTimeout(timer); published = value; draft.value = value; parse()
   nextTick(syncSelection)
 })
-onBeforeUnmount(() => { clearTimeout(timer); publish() })
-defineExpose({ flush })
+onMounted(() => { document.addEventListener('pointerdown', closeExportOutside, true); document.addEventListener('focusin', closeExportOutside) })
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', closeExportOutside, true); document.removeEventListener('focusin', closeExportOutside); clearTimeout(timer); publish() })
+function hasPendingEdits() { return draft.value !== published }
+defineExpose({ flush, hasPendingEdits })
 parse()
 </script>
 
 <template>
   <section class="diagram-editor" :class="{ 'is-dark': theme === 'dark' }" aria-label="代码图表编辑器">
     <div class="diagram-toolbar" :inert="modalOpen">
-      <div class="diagram-title"><AppIcon name="code" :size="18"/><strong>代码图表</strong><span class="diagram-badge">{{ kindsCount }} 类图表</span></div>
+      <div class="diagram-toolbar-start"><div v-if="$slots.server" class="diagram-server-slot" data-testid="diagram-server-slot"><slot name="server" /></div><div class="diagram-title"><AppIcon name="code" :size="18"/><strong>代码图表</strong><span class="diagram-badge">{{ kindsCount }} 类图表</span></div></div>
       <div class="diagram-toolbar-actions"><button ref="styleButton" type="button" class="diagram-style-toggle" :aria-label="`全局风格，当前${currentStyle.label}`" :title="`全局风格 · ${currentStyle.label}`" :aria-expanded="stylesOpen" aria-haspopup="dialog" data-testid="diagram-style-toggle" @click="openStyles"><AppIcon name="palette" :size="18"/><span>全局风格<small>{{ currentStyle.label }}</small></span><AppIcon name="chevron" :size="12"/></button>
       <button ref="templateButton" type="button" class="diagram-template-toggle" aria-label="图表类型与模板" :aria-expanded="templatesOpen" aria-haspopup="dialog" data-testid="diagram-template-toggle" @click="openTemplates"><AppIcon name="templates" :size="16"/><span>图表模板</span><AppIcon name="chevron" :size="12"/></button>
-      <button type="button" class="diagram-convert" aria-label="转为可编辑流程图" data-testid="diagram-create-copy" :disabled="!compiled || parsing" @click="createFlow"><AppIcon name="duplicate" :size="16"/><span>创建可编辑副本</span></button></div>
+      <button type="button" class="diagram-convert" aria-label="转为可编辑流程图" data-testid="diagram-create-copy" :disabled="!compiled || parsing" @click="createFlow"><AppIcon name="duplicate" :size="16"/><span>创建可编辑副本</span></button>
+      <div ref="exportControl" class="diagram-image-export"><button ref="exportButton" type="button" class="diagram-export-toggle" aria-label="导出图片" :title="parsing ? '正在更新预览，完成后可导出图片' : error ? '请先修正源码后再导出图片' : '导出 PNG 图片或 SVG 矢量图'" :disabled="!canExport" :aria-expanded="exportOpen" :aria-controls="exportMenuId" aria-haspopup="menu" data-testid="diagram-export-image" @click="toggleExportMenu" @keydown.down.prevent.stop="openExportMenu()" @keydown.up.prevent.stop="openExportMenu(true)" @keydown.escape.prevent.stop="closeExportMenu(true)"><AppIcon name="image" :size="17"/><span>导出图片</span><AppIcon name="chevron" :size="12"/></button>
+        <div v-if="exportOpen" :id="exportMenuId" ref="exportMenu" class="diagram-export-menu" role="menu" aria-label="导出图片格式" data-testid="diagram-export-menu" @keydown="exportMenuKeydown"><button type="button" role="menuitem" tabindex="-1" data-testid="diagram-export-png" @click="chooseImageExport('png')"><AppIcon name="image" :size="17"/><span>PNG 图片<small>适合文档和演示</small></span></button><button type="button" role="menuitem" tabindex="-1" data-testid="diagram-export-svg" @click="chooseImageExport('svg')"><AppIcon name="shapes" :size="17"/><span>SVG 矢量图<small>放大后保持清晰</small></span></button></div>
+      </div></div>
     </div>
     <div class="diagram-workspace" :inert="modalOpen">
       <div class="diagram-source-panel">
@@ -341,6 +387,15 @@ parse()
 
 .diagram-toolbar-actions, .diagram-template-toggle, .diagram-error strong, .diagram-error button { display: flex; align-items: center; gap: 7px; }
 .diagram-toolbar-actions { min-width: 0; gap: 8px; }
+.diagram-toolbar-start { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.diagram-server-slot { flex: none; display: flex; align-items: center; }
+.diagram-image-export { position: relative; flex: none; }
+.diagram-export-toggle { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--ui-accent, #3577e5) !important; background: var(--ui-soft, #eaf1ff) !important; font-size: 12px !important; }
+.diagram-export-menu { position: absolute; right: 0; top: calc(100% + 7px); z-index: 30; width: 196px; max-width: calc(100vw - 24px); padding: 5px; box-sizing: border-box; background: var(--ui-surface, #fff); border: 1px solid var(--ui-line, #dce3ed); border-radius: 9px; box-shadow: 0 8px 28px #172b4d26; }
+.diagram-export-menu button { display: flex; align-items: center; gap: 9px; width: 100%; border-color: transparent; text-align: left; padding: 9px; }
+.diagram-export-menu button:hover, .diagram-export-menu button:focus-visible { background: var(--ui-soft, #eaf1ff); }
+.diagram-export-menu button > span { display: grid; gap: 4px; font-size: 12px; }
+.diagram-export-menu small { color: var(--ui-muted, #64748b); font-size: 10px; }
 .diagram-template-toggle { white-space: nowrap; font-size: 12px !important; }
 .diagram-style-toggle { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px !important; }
 .diagram-style-toggle > span { display: flex; align-items: center; gap: 7px; }
@@ -410,7 +465,12 @@ parse()
   .diagram-badge { display: none; }
 }
 @media (max-width: 640px) {
-  .diagram-title { gap: 5px; }.diagram-title strong { display: none; }
+  .diagram-toolbar { flex-wrap: wrap; row-gap: 7px; }
+  .diagram-toolbar-start { width: 100%; gap: 8px; }
+  .diagram-toolbar-actions { width: 100%; justify-content: space-between; }
+  .diagram-export-toggle { padding: 6px 7px !important; font-size: 11px !important; gap: 5px; }
+  .diagram-export-toggle > svg:last-child { display: none; }
+  .diagram-title { gap: 5px; }.diagram-title strong { font-size: 12px; }
   .diagram-toolbar-actions { gap: 5px; }.diagram-template-toggle { font-size: 11px !important; padding: 6px 7px !important; gap: 4px; }
   .diagram-template-toggle > svg:last-child { display: none; }
   .diagram-convert { gap: 5px; }

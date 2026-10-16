@@ -1,8 +1,12 @@
 mod files;
+pub mod server;
 
 #[cfg(feature = "desktop")]
 mod desktop {
     use super::files::{FileStore, NativeFile, SaveResult};
+    use super::server::{
+        Asset, DocumentServer, ServerStatus, Snapshot, StartResult, UpdateRequest, UpdateResult,
+    };
     use base64::{engine::general_purpose::STANDARD, Engine};
     use serde::Deserialize;
     use std::{
@@ -19,6 +23,98 @@ mod desktop {
     pub struct NativeState(Arc<Mutex<FileStore>>);
     #[derive(Default)]
     pub struct Closing(AtomicBool);
+    #[derive(Clone, Default)]
+    pub struct ServerState(Arc<Mutex<DocumentServer>>);
+
+    #[tauri::command]
+    pub async fn start_document_server(
+        document: serde_json::Value,
+        app: tauri::AppHandle,
+        state: State<'_, ServerState>,
+    ) -> Result<StartResult, String> {
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let resolver = app.asset_resolver();
+            let embedded_paths: std::collections::HashSet<String> = resolver
+                .iter()
+                .map(|(name, _)| name.trim_start_matches('/').to_owned())
+                .collect();
+            let assets = Arc::new(move |path: &str| {
+                if !embedded_paths.is_empty() && !embedded_paths.contains(path) {
+                    return None;
+                }
+                resolver.get(path.to_owned()).map(|asset| Asset {
+                    bytes: asset.bytes,
+                    mime_type: asset.mime_type,
+                })
+            });
+            state
+                .0
+                .lock()
+                .map_err(|_| "共享服务状态不可用。")?
+                .start(document, assets)
+        })
+        .await
+        .map_err(|error| format!("启动共享服务失败：{error}"))?
+    }
+    #[tauri::command]
+    pub async fn read_shared_document(
+        session_id: String,
+        state: State<'_, ServerState>,
+    ) -> Result<Snapshot, String> {
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            state
+                .0
+                .lock()
+                .map_err(|_| "共享服务状态不可用。")?
+                .read(&session_id)
+        })
+        .await
+        .map_err(|error| format!("读取共享内容失败：{error}"))?
+    }
+    #[tauri::command]
+    pub async fn update_shared_document(
+        session_id: String,
+        base_revision: u64,
+        document: serde_json::Value,
+        state: State<'_, ServerState>,
+    ) -> Result<UpdateResult, String> {
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            state
+                .0
+                .lock()
+                .map_err(|_| "共享服务状态不可用。")?
+                .update(UpdateRequest {
+                    session_id,
+                    base_revision,
+                    document,
+                })
+        })
+        .await
+        .map_err(|error| format!("更新共享内容失败：{error}"))?
+    }
+    #[tauri::command]
+    pub async fn stop_document_server(
+        session_id: String,
+        state: State<'_, ServerState>,
+    ) -> Result<Option<Snapshot>, String> {
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            state
+                .0
+                .lock()
+                .map_err(|_| "共享服务状态不可用。")?
+                .stop(&session_id)
+        })
+        .await
+        .map_err(|error| format!("停止共享服务失败：{error}"))?
+    }
+    #[tauri::command]
+    pub fn document_server_status(state: State<'_, ServerState>) -> Result<ServerStatus, String> {
+        Ok(state.0.lock().map_err(|_| "共享服务状态不可用。")?.status())
+    }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -135,10 +231,16 @@ mod desktop {
             .plugin(tauri_plugin_dialog::init())
             .manage(NativeState::default())
             .manage(Closing::default())
+            .manage(ServerState::default())
             .invoke_handler(tauri::generate_handler![
                 open_native_files,
                 save_native_file,
-                close_native_window
+                close_native_window,
+                start_document_server,
+                read_shared_document,
+                update_shared_document,
+                stop_document_server,
+                document_server_status
             ])
             .on_window_event(|window, event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -148,8 +250,16 @@ mod desktop {
                     }
                 }
             })
-            .run(tauri::generate_context!())
-            .expect("启动 Open Workflow 失败");
+            .build(tauri::generate_context!())
+            .expect("启动 Open Workflow 失败")
+            .run(|app, event| {
+                if matches!(event, tauri::RunEvent::Exit) {
+                    let state = app.state::<ServerState>();
+                    if let Ok(mut server) = state.0.lock() {
+                        server.stop_all();
+                    };
+                }
+            });
     }
 }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 })
 const paths: Record<string, string> = {
+  server: 'M3 3h18v7H3zM3 14h18v7H3zM7 6.5h.01M7 17.5h.01M12 6.5h5m-5 11h5',
   brushes: 'M4 21V10h5v11M3 10l3.5-7L10 10M13 21V9h7v12M13 9V4h7v5M4 16h5m4 0h7',
   laser: 'm3 17 4 4 8-8-4-4zM14 5l1-3m4 5 3-1m-4 6 3 1M5 18l7-7',
   canvas: 'M4 4h16v16H4zM8 4v2m8-2v2M4 8h2m12 0h2M4 16h2m12 0h2M8 18v2m8-2v2',

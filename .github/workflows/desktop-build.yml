@@ -24,6 +24,11 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: browser-service
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser

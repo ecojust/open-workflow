@@ -1,6 +1,6 @@
 {
   "name": "open-workflow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5199 --strictPort",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:browser": "node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs && node tests/browser/canvas-workspace.cjs && node tests/browser/brush-cursor.cjs && node tests/browser/diagram-rich-templates.cjs",
+    "test:browser": "npm run build && node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs && node tests/browser/canvas-workspace.cjs && node tests/browser/brush-cursor.cjs && node tests/browser/diagram-rich-templates.cjs && node tests/browser/document-server.cjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"

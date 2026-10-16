@@ -14,6 +14,17 @@ Open Workflow 的原创代码按根目录 [LICENSE](LICENSE) 中的 MIT 许可�
 
 桌面直接 Rust 依赖包括 `tauri`、`tauri-plugin-dialog`、`tauri-build`、`serde`、`sha2`、`tempfile` 和 `base64`。Tauri 及其官方对话框插件采用 MIT OR Apache-2.0；其余依赖各自的许可证以对应 crate 的元数据和随附许可为准。本文件不是所有 Cargo 传递依赖或系统组件的完整许可审计。
 
+局域网服务还使用以下直接依赖，准确版本由 `src-tauri/Cargo.lock` 锁定：
+
+| 依赖 | 用途 | 许可 |
+| --- | --- | --- |
+| `axum` | HTTP 请求与路由 | MIT |
+| `tokio` | 异步监听与服务停止 | MIT |
+| `serde_json` | 共享文档序列化 | MIT OR Apache-2.0 |
+| `getrandom` | 访问令牌与会话随机数 | MIT OR Apache-2.0 |
+| `if-addrs` | 本机网络接口地址 | MIT OR BSD-3-Clause |
+| `time` | 文档日期校验 | MIT OR Apache-2.0 |
+
 ## 开发和测试工具
 
 | 软件 | 版本 | 声明许可 |
@@ -36,6 +47,16 @@ Vue：Copyright (c) 2018-present, Yuxi (Evan) You。
 fflate：Copyright (c) 2023 Arjun Barrett。
 
 Tauri JavaScript API 的 MIT 许可：Copyright (c) 2017 - Present Tauri Apps Contributors。Tauri 的 SPDX 元数据同时列出：Copyright 2019-2025, The Tauri Programme in the Commons Conservancy。
+
+局域网服务新增运行时依赖的 MIT 许可版权声明如下，保留其发行包原文：
+
+- axum：Copyright (c) 2019 axum Contributors
+- tokio：Copyright (c) Tokio Contributors
+- getrandom：Copyright (c) 2018-2025 The rust-random Project Developers；Copyright (c) 2014 The Rust Project Developers
+- if-addrs：Copyright 2018 MaidSafe.net limited.；Copyright 2020 messense
+- time：Copyright (c) Jacob Pratt et al.
+
+serde_json 发行包的 `LICENSE-MIT` 提供下列 MIT 条款，未单独列出版权行。
 
 以上版权声明对应的 MIT 条款如下；Tauri 也提供 Apache-2.0 许可选项，参见其发行包中的 `LICENSE-APACHE-2.0`。
 

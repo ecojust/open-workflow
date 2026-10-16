@@ -46,7 +46,7 @@ const bindingAnchors = computed(() => {
 })
 const globalStyle = computed(() => sceneDefaultStyle(draft.value))
 let flushing = false, captureTarget: Element | undefined
-const pendingControls = new WeakSet<Element>()
+const pendingControls = new Set<Element>()
 let observer: ResizeObserver | undefined, clipboard: SceneElement[] = [], initialFit = false, activePointerId: number | undefined, penPointBudget = 0
 let gesture: { type: 'move' | 'pan' | 'draw' | 'pen' | 'edge' | 'endpoint' | 'resize' | 'marquee' | 'erase' | 'laser'; movingIds?: string[]; endpoint?: 'from' | 'to'; start: Point; last: Point; original: Scene; id?: string; originalView?: { x: number; y: number }; additive?: boolean; moved?: boolean } | undefined
 const marquee = ref<Bounds>()
@@ -193,7 +193,14 @@ function flush() {
     if (node && (node.type === 'shape' ? node.text : node.label) !== editText.value) { if (node.type === 'shape') node.text = editText.value.slice(0, 100000); else node.label = editText.value.slice(0, 100000); commit('修改文字') }
   } finally { flushing = false }
 }
-defineExpose({ flush, fitCanvas })
+function hasPendingEdits() {
+  if (gesture || editingId.value) return true
+  for (const control of pendingControls) if (!control.isConnected || !editor.value?.contains(control)) pendingControls.delete(control)
+  if (pendingControls.size) return true
+  const element = primary.value, input = propertyTextInput.value
+  return Boolean(input && element && ((element.type === 'shape' && input.value !== element.text) || (element.type === 'edge' && input.value !== element.label)))
+}
+defineExpose({ flush, fitCanvas, hasPendingEdits })
 function pointerDown(event: PointerEvent, element?: SceneElement, resize = false) {
   if (event.button !== 0 && event.button !== 1) return
   if (event.target instanceof Element && event.target.closest('.inline-text-editor')) return
@@ -454,12 +461,12 @@ onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laser
 <template>
   <section ref="editor" class="scene-editor" @keydown="keyDown" @input.capture="markControlDirty" @change.capture="clearControlDirty" data-testid="scene-editor">
     <div class="canvas-commandbar" @pointerdown.stop>
-      <div class="toolset" role="toolbar" aria-label="画布工具">
+      <div class="canvas-primary-tools"><div v-if="$slots.server" class="canvas-server-slot" data-testid="canvas-server-slot"><slot name="server" /></div><div class="toolset" role="toolbar" aria-label="画布工具">
         <button aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="edgeDefaultsOpen = false; brushSettingsOpen = false; libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
         <button v-for="item in tools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
         <span class="tool-divider" />
         <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()"><AppIcon name="image" :size="20" /></button>
-      </div>
+      </div></div>
       <div class="commandbar-actions">
         <button class="brush-settings-toggle" aria-label="笔触设置" :title="`笔触设置 · ${brushName}`" :aria-expanded="brushSettingsOpen" data-testid="brush-settings-toggle" @click="toggleBrushSettings"><AppIcon name="brushes" /></button>
         <button class="tool-lock-toggle" aria-label="连续绘制" :title="toolLocked ? '连续绘制已开启 · Esc 返回选择' : '开启连续绘制'" :aria-pressed="toolLocked" data-testid="tool-lock" @click="toggleToolLock"><AppIcon :name="toolLocked ? 'lock' : 'unlock'" /></button>
@@ -525,7 +532,7 @@ onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laser
 /* The canvas keeps the space; tools live in a compact floating bar. */
 .scene-editor{position:relative}
 .canvas-commandbar,.board-mode .canvas-commandbar{position:absolute;z-index:10;left:50%;top:14px;transform:translateX(-50%);height:48px;min-height:48px;max-width:calc(100% - 28px);box-sizing:border-box;border:1px solid var(--ui-line);border-radius:12px;padding:5px 8px;gap:8px;box-shadow:0 4px 18px #202c4510;justify-content:space-between}
-.toolset{min-width:0;overflow-x:auto;scrollbar-width:none}.toolset::-webkit-scrollbar{display:none}.toolset button{flex-shrink:0}.toolset button,.commandbar-actions button{width:33px;height:34px;font-size:16px}.commandbar-actions{flex-shrink:0}.board-mode .commandbar-actions{position:static}.commandbar-actions .text-button{white-space:nowrap;padding:0 7px}.tool-divider{flex-shrink:0;margin:0 3px;height:21px}
+.canvas-primary-tools{display:flex;align-items:center;min-width:0;gap:4px}.canvas-server-slot{display:flex;align-items:center;flex:none}.canvas-primary-tools .toolset{flex:1}.toolset{min-width:0;overflow-x:auto;scrollbar-width:none}.toolset::-webkit-scrollbar{display:none}.toolset button{flex-shrink:0}.toolset button,.commandbar-actions button{width:33px;height:34px;font-size:16px}.commandbar-actions{flex-shrink:0}.board-mode .commandbar-actions{position:static}.commandbar-actions .text-button{white-space:nowrap;padding:0 7px}.tool-divider{flex-shrink:0;margin:0 3px;height:21px}
 .canvas-workspace{height:100%;position:relative}.shape-library,.properties-panel{align-self:stretch;margin:76px 12px 64px 0;border:1px solid var(--ui-line);border-radius:12px;box-shadow:0 4px 20px #202c450a;padding:16px;box-sizing:border-box}.shape-library{margin-left:12px;margin-right:0;width:158px;flex-basis:158px}.properties-panel{width:216px;flex-basis:216px}.panel-heading{margin-bottom:14px;gap:8px}.panel-heading>small{margin-left:auto}.panel-heading>button{border:0;background:transparent;border-radius:5px;padding:3px;display:grid;place-items:center;color:var(--ui-muted)}.panel-heading>button:hover{background:var(--ui-bg)}.property-section{padding-bottom:14px;margin-bottom:14px}.property-section:last-child{border-bottom:0;margin-bottom:0}.property-section h3{margin-bottom:10px}.property-row{margin:9px 0}.property-tip{margin-top:18px}.shape-grid button{height:68px}.library-hint{margin-top:18px}
 .global-style-panel{position:absolute;right:0;top:56px;width:240px;box-sizing:border-box;padding:15px;border:1px solid var(--ui-line);border-radius:12px;background:var(--ui-surface);box-shadow:0 10px 32px #18203922}.line-mode-options{display:flex;gap:8px;margin-bottom:16px}.line-mode-options>button{flex:1;display:flex;flex-direction:column;gap:5px;align-items:center;background:var(--ui-bg);border:1px solid var(--ui-line);border-radius:8px;padding:9px;color:var(--ui-muted);font-size:11px}.line-mode-options>button[aria-pressed=true]{color:var(--ui-accent);border-color:var(--ui-accent);background:#8670ef12}.line-mode-options svg{width:60px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.global-style-hint{font-size:11px;line-height:1.7;margin:14px 0 0;color:var(--ui-muted)}.open-global-style{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:17px;border:1px solid var(--ui-line);border-radius:7px;background:var(--ui-bg);padding:9px;font-size:11px!important}
 .edge-handles circle{cursor:crosshair}.binding-preview{filter:drop-shadow(0 0 3px #7c6aee30)}.inline-text-editor{z-index:6;min-height:44px;box-shadow:0 3px 18px #202c451a}.canvas-bottom{left:16px;right:16px;bottom:16px}.canvas-hint{font-size:10px;max-width:calc(100% - 180px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -540,6 +547,6 @@ onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laser
 @media(max-width:1100px){.commandbar-actions .style-trigger{width:33px;padding:0;justify-content:center}.style-trigger-label,.style-trigger-chevron{display:none}}
 @media(max-width:540px){.commandbar-actions .style-trigger{width:30px}.empty-canvas small{font-size:9px}}
 @media(max-width:1100px){.commandbar-actions .layout-trigger{width:33px;padding:0}.layout-trigger>span{display:none}}
-@media(max-width:540px){.canvas-commandbar{height:auto;min-height:0;flex-direction:column;align-items:stretch;gap:4px}.toolset{width:100%;min-height:34px}.commandbar-actions{justify-content:flex-end;gap:3px}.commandbar-actions .layout-trigger{width:30px}.shape-library,.properties-panel{margin-top:110px}.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 220px);overflow:auto}}
+@media(max-width:540px){.canvas-primary-tools{width:100%}.canvas-commandbar{height:auto;min-height:0;flex-direction:column;align-items:stretch;gap:4px}.toolset{width:100%;min-height:34px}.commandbar-actions{justify-content:flex-end;gap:3px}.commandbar-actions .layout-trigger{width:30px}.shape-library,.properties-panel{margin-top:110px}.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 220px);overflow:auto}}
 .brush-settings-popover{position:absolute;right:0;top:calc(100% + 8px);z-index:12}.laser-trail{filter:drop-shadow(0 0 5px #ff4d6577)}
 </style>

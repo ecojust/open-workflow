@@ -1,3 +1,5 @@
+import type { ServerStartResult, ServerStatus, SharedSnapshot, SharedWriteRequest, SharedWriteResult } from './core/sharing.ts'
+
 export interface NativeFile { name: string; path: string; text: string; stamp: string }
 export interface NativeSaveRequest { suggestedName: string; bytes: Uint8Array; path?: string; expectedStamp?: string }
 export interface NativeSaveResult { name: string; path: string; stamp: string }
@@ -36,4 +38,27 @@ export async function closeNativeWindow(): Promise<void> {
   if (!isDesktop()) return
   const { invoke } = await import('@tauri-apps/api/core')
   await invoke('close_native_window')
+}
+
+export async function startDocumentServer(document: SharedSnapshot['document']): Promise<ServerStartResult> {
+  if (!isDesktop()) throw new Error('请在桌面中开启 Server，再用网页访问显示的地址。')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<ServerStartResult>('start_document_server', { document })
+}
+export async function readDocumentServer(sessionId: string): Promise<SharedSnapshot> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<SharedSnapshot>('read_shared_document', { sessionId })
+}
+export async function writeDocumentServer(request: SharedWriteRequest): Promise<SharedWriteResult> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<SharedWriteResult>('update_shared_document', { ...request })
+}
+export async function stopDocumentServer(sessionId: string): Promise<SharedSnapshot | null> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<SharedSnapshot | null>('stop_document_server', { sessionId })
+}
+export async function documentServerStatus(): Promise<ServerStatus> {
+  if (!isDesktop()) return { running: false, urls: [] }
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<ServerStatus>('document_server_status')
 }

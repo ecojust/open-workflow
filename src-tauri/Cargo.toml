@@ -1,6 +1,6 @@
 [package]
 name = "open-workflow"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local workflow diagrams and an infinite whiteboard"
 edition = "2021"
 rust-version = "1.90"
@@ -29,3 +29,9 @@ serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tempfile = "3"
 base64 = "0.22"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time", "macros"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+getrandom = "0.3"
+if-addrs = "0.13"
+time = { version = "0.3", features = ["parsing"] }
