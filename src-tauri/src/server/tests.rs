@@ -1,4 +1,5 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -8,6 +9,9 @@ use std::{
 fn example_document() -> Value {
     json!({ "format": "open-workflow", "version": 1, "id": "document-a", "title": "共享画布", "kind": "board", "source": "", "createdAt": "2026-10-16T12:00:00.000Z", "updatedAt": "2026-10-16T12:00:00.000Z", "scene": { "background": "#ffffff", "grid": true, "elements": [] } })
 }
+const ICON_PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 fn assets() -> AssetProvider {
     Arc::new(|path| match path {
         "index.html" => Some(Asset {
@@ -17,6 +21,10 @@ fn assets() -> AssetProvider {
         "assets/app-test.js" => Some(Asset {
             bytes: b"export const ready = true;".to_vec(),
             mime_type: "text/javascript".into(),
+        }),
+        "favicon.png" | "brand-mark.png" | "private.png" => Some(Asset {
+            bytes: STANDARD.decode(ICON_PNG).unwrap(),
+            mime_type: "image/png".into(),
         }),
         _ => None,
     })
@@ -139,9 +147,31 @@ fn service_starts_explicitly_and_serves_only_app_assets() {
         assert_eq!(code, 200);
         assert!(body.is_empty());
     }
+    for path in ["/favicon.png", "/brand-mark.png"] {
+        let expected = STANDARD.decode(ICON_PNG).unwrap();
+        let (code, headers, body) = request(port, "GET", path, &[], &[]);
+        assert_eq!(code, 200, "{path}");
+        assert_eq!(body, expected, "{path}");
+        assert!(headers.contains("content-type: image/png"), "{path}");
+        assert!(
+            headers.contains("x-content-type-options: nosniff"),
+            "{path}"
+        );
+        let (code, headers, body) = request(port, "HEAD", path, &[], &[]);
+        assert_eq!(code, 200, "{path}");
+        assert!(headers.contains("content-type: image/png"), "{path}");
+        assert!(body.is_empty(), "{path}");
+    }
+    assert!(assets()("private.png").is_some());
     for path in [
         "/index.html",
         "/secret.txt",
+        "/private.png",
+        "/favicon.svg",
+        "/favicon.png/extra",
+        "/brand-mark.png/extra",
+        "/nested/brand-mark.png",
+        "/brand-mark.png?file=private.png",
         "/assets/../index.html",
         "/assets/%2e%2e",
         "/assets/folder/app.js",
@@ -151,6 +181,7 @@ fn service_starts_explicitly_and_serves_only_app_assets() {
         "/api/document?token=x",
     ] {
         assert_eq!(request(port, "GET", path, &[], &[]).0, 404, "{path}");
+        assert_eq!(request(port, "HEAD", path, &[], &[]).0, 404, "{path}");
     }
     assert_eq!(request(port, "POST", "/", &[], &[]).0, 405);
 }

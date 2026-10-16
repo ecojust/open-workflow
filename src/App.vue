@@ -511,7 +511,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell" :data-theme="effectiveTheme">
     <header class="global-toolbar">
-      <button class="brand" title="返回工作台" aria-label="返回工作台" @click="showHome"><img src="/favicon.svg" width="30" height="30" alt=""><strong>Open Workflow</strong></button>
+      <button class="brand" title="返回工作台" aria-label="返回工作台" @click="showHome"><img src="/brand-mark.png" width="30" height="30" alt=""><strong>Open Workflow</strong></button>
       <div class="file-actions">
         <button title="新建文档 (Ctrl+N)" :aria-expanded="menu === 'new'" @click="menu = menu === 'new' ? null : 'new'"><AppIcon name="plus"/><span>新建</span><AppIcon name="chevron" :size="12"/></button>
         <button title="打开文件 (Ctrl+O)" @click="openFiles"><AppIcon name="folder"/><span>打开</span></button>

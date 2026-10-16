@@ -335,8 +335,8 @@ fn safe_asset(path: &str) -> Option<&str> {
     if path == "/" {
         return Some("index.html");
     }
-    if path == "/favicon.svg" {
-        return Some("favicon.svg");
+    if matches!(path, "/favicon.png" | "/brand-mark.png") {
+        return Some(path.trim_start_matches('/'));
     }
     let name = path.strip_prefix("/assets/")?;
     if name.is_empty()

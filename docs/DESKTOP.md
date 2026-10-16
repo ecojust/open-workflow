@@ -47,4 +47,4 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --no-default-features -
 
 Windows 生成 NSIS 安装程序；Mac 生成 DMG。当前配置没有商业代码签名及 Apple 公证，Mac 使用临时签名。构建成功并不等于所有平台的交互功能已完成实机验收。
 
-`src-tauri/icons/icon.svg` 是本项目原创节点与连线图标，按项目 MIT 许可分发。PNG、ICO 与 ICNS 均由这个矢量源生成。
+应用使用橙色生肖龙图标，源图保存在 `src/assets/branding/open-workflow-logo.png`，来源及资源生成方式见[图标说明](../src/assets/branding/README.md)。界面标识、网页图标与安装包所用的 PNG、ICO、ICNS 均由同一源图生成。
