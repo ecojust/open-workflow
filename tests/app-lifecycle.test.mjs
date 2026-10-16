@@ -143,33 +143,38 @@ test('closing the same clean tab twice cannot close a different document', async
   assert.deepEqual(app.tabs.value.map(item => item.document.id), [second.id])
 })
 
-test('canceling native window close preserves drafts previously marked for discard', async () => {
+test('canceling aggregate native close preserves every open document and draft', async () => {
   const first = createDocument('flow'), second = createDocument('board')
-  const { app, records, deleted, closed } = harness({ desktop: true, records: [record(first), record(second)] })
-  app.addDocument(first); app.addDocument(second)
+  const { app, records, deleted, closed, mounted } = harness({
+    desktop: true, records: [record(first), record(second)],
+    local: { 'ow-session': JSON.stringify({ ids: [first.id, second.id] }) },
+  })
+  await mounted[0]()
   const work = app.nativeClose()
-  await settleUntil(() => app.modal.value?.title.includes(first.title))
-  app.finishModal('discard')
-  await settleUntil(() => app.modal.value?.title.includes(second.title))
-  assert.deepEqual(deleted, [], 'no destructive draft operation occurs before all choices are known')
+  await settleUntil(() => app.modal.value?.kind === 'close-all')
+  assert.deepEqual(app.modal.value.lines, [first.title, second.title])
+  assert.deepEqual(deleted, [], 'No draft is removed before the aggregate choice is confirmed')
   app.finishModal('cancel')
   await work
-  assert.equal(app.tabs.value.length, 2)
+  assert.deepEqual(app.tabs.value.map(tab => tab.document.id), [first.id, second.id])
   assert.ok(records.has(first.id) && records.has(second.id))
   assert.equal(closed(), 0)
 })
 
-test('confirmed native window close performs selected discards only after every prompt', async () => {
-  const first = createDocument('flow'), second = createDocument('board')
-  const { app, records, deleted, closed } = harness({ desktop: true, records: [record(first), record(second)] })
-  app.addDocument(first); app.addDocument(second)
+test('confirmed aggregate native close removes only dirty drafts and preserves saved documents', async () => {
+  const first = createDocument('flow'), second = createDocument('board'), saved = createDocument('flow')
+  const { app, records, deleted, closed, mounted } = harness({
+    desktop: true, records: [record(first), record(second), record(saved, true)],
+    local: { 'ow-session': JSON.stringify({ ids: [first.id, second.id, saved.id] }) },
+  })
+  await mounted[0]()
   const work = app.nativeClose()
-  await settleUntil(() => app.modal.value?.title.includes(first.title)); app.finishModal('discard')
-  await settleUntil(() => app.modal.value?.title.includes(second.title))
+  await settleUntil(() => app.modal.value?.kind === 'close-all')
+  assert.deepEqual(app.modal.value.lines, [first.title, second.title])
   assert.equal(deleted.length, 0)
   app.finishModal('discard'); await work
   assert.deepEqual(deleted, [first.id, second.id])
-  assert.equal(records.size, 0)
+  assert.deepEqual([...records.keys()], [saved.id])
   assert.equal(closed(), 1)
 })
 

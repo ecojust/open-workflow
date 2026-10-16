@@ -450,7 +450,27 @@ async function main() {
     assert.ok(stage.width >= 300)
     const toolbar = await page.locator('.canvas-commandbar').boundingBox()
     assert.ok(toolbar.x >= 0 && toolbar.x + toolbar.width <= 321)
-    assert.ok(toolbar.height <= 88, 'The two-row mobile toolbar should keep tools and settings compact and reachable')
+    const navigation = page.getByRole('toolbar', { name: '选择与移动', exact: true })
+    const shapes = page.getByRole('toolbar', { name: '快捷图形', exact: true })
+    const drawing = page.getByRole('toolbar', { name: '自由绘制', exact: true })
+    const actions = page.getByRole('toolbar', { name: '画布操作', exact: true })
+    const groups = await Promise.all([navigation, shapes, drawing, actions].map(group => group.boundingBox()))
+    assert.ok(groups.every(box => box && box.x >= 0 && box.x + box.width <= 321), 'Each named tool group stays within the narrow viewport')
+    assert.ok(groups[0].x + groups[0].width <= groups[1].x, 'Navigation and quick shapes remain separate')
+    assert.ok(groups[2].y >= Math.max(groups[0].y + groups[0].height, groups[1].y + groups[1].height), 'Free drawing occupies its own row below the shape shortcuts')
+    assert.ok(groups[3].y >= groups[2].y + groups[2].height, 'Canvas actions do not overlap the drawing tools')
+    await expect(shapes.getByTestId('tool-rectangle')).toHaveCount(1)
+    await expect(shapes.getByTestId('brush-settings-toggle')).toHaveCount(0)
+    await expect(drawing.getByTestId('brush-settings-toggle')).toContainText('自定义笔触')
+    assert.ok(stage.y >= toolbar.y + toolbar.height, 'The grouped toolbar does not cover the canvas')
+    assert.ok(stage.height >= page.viewportSize().height / 2, 'The narrow layout leaves at least half the viewport available for drawing')
+    for (const group of [navigation, shapes, drawing, actions]) {
+      for (const button of await group.getByRole('button').all()) {
+        if (await button.isDisabled()) continue
+        await button.scrollIntoViewIfNeeded()
+        await button.click({ trial: true })
+      }
+    }
     await draw(page, 'note', [.15, .30], [.75, .60])
     await page.locator('.inline-text-editor').fill('窄屏原位编辑')
     await page.locator('.inline-text-editor').press('Control+Enter')
