@@ -9,10 +9,11 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5199 --strictPort",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:browser": "npm run build && node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs && node tests/browser/canvas-workspace.cjs && node tests/browser/brush-cursor.cjs && node tests/browser/diagram-rich-templates.cjs && node tests/browser/document-server.cjs",
+    "test:browser": "npm run build && node tests/browser/workflow.cjs && node tests/browser/refinements.cjs && node tests/browser/expanded-workspaces.cjs && node tests/browser/diagram-styles.cjs && node tests/browser/canvas-workspace.cjs && node tests/browser/brush-cursor.cjs && node tests/browser/diagram-rich-templates.cjs && node tests/browser/document-server.cjs && node tests/browser/header-close.cjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "test:browser:header-close": "node tests/browser/header-close.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.3",

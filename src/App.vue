@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppIcon from './components/AppIcon.vue'
+import HeaderControls from './components/HeaderControls.vue'
+import AppInformation from './components/AppInformation.vue'
+import { buildInfo } from './core/build-info.ts'
 import SceneEditor from './components/SceneEditor.vue'
 import CodeDiagramEditor from './components/CodeDiagramEditor.vue'
 import ServerControl from './components/ServerControl.vue'
@@ -21,7 +24,7 @@ interface Tab {
   path?: string; stamp?: string; revision: number; draftRevision: number
   draftState: 'pending' | 'saved' | 'paused' | 'error'; lastOpened: number
 }
-type ModalKind = 'unsaved' | 'rename' | 'notice' | 'delete' | 'help'
+type ModalKind = 'unsaved' | 'close-all' | 'rename' | 'notice' | 'delete' | 'help' | 'info'
 interface Modal { kind: ModalKind; title: string; text: string; lines?: string[]; value?: string }
 const tabs = ref<Tab[]>([])
 const activeId = ref('')
@@ -33,7 +36,7 @@ const booting = ref(true)
 const busy = ref('')
 const closingWindow = ref(false)
 const status = ref('所有创作，留在本地。')
-const menu = ref<'new' | 'export' | 'theme' | null>(null)
+const menu = ref<'new' | 'export' | null>(null)
 const toast = ref<{ text: string; error: boolean } | null>(null)
 const modal = ref<Modal | null>(null)
 const modalPanel = ref<HTMLElement>()
@@ -72,6 +75,7 @@ let modalResolve: ((value: string) => void) | undefined
 let previousFocus: HTMLElement | null = null
 let unlisten: (() => void) | undefined
 let closing = false
+let pendingWindowClose = false
 let saveCompletion: Promise<void> | undefined
 let autoSaveGeneration = 0
 
@@ -418,35 +422,54 @@ async function removeRecent(record: DraftRecord) {
   try { await removeLocal(record.id) } catch (error) { errorMessage(error) }
 }
 async function nativeClose() {
-  if (closing) return; closing = true
+  if (booting.value) { pendingWindowClose = true; return }
+  if (closing) return
+  if (serverBusy.value || closingTabs.size || (busy.value && !saveCompletion)) {
+    message('请等待当前操作完成后再关闭。')
+    return
+  }
+  closing = true; closingWindow.value = true; menu.value = null
   let requested = false
-  const choices: Array<{ tab: Tab; choice: 'keep' | 'remove' }> = []
+  const removedDrafts: DraftRecord[] = []
   try {
+    // Freeze editing and finish pending saves before reviewing the final document set.
+    while (saveCompletion) await saveCompletion
     await flush()
-    for (const tab of [...tabs.value]) {
-      const choice = await mayClose(tab); if (choice === 'cancel') return
-      choices.push({ tab, choice })
-    }
-    if (serverStatus.value.running) {
-      const reviewed = new Map(tabs.value.map(tab => [tab.document.id, contentKey(tab.document)]))
-      await endSharing()
-      for (const tab of [...tabs.value]) {
-        if (reviewed.get(tab.document.id) === contentKey(tab.document)) continue
-        const choice = await mayClose(tab); if (choice === 'cancel') return
-        const previous = choices.find(item => item.tab.document.id === tab.document.id)
-        if (previous) previous.choice = choice
-        else choices.push({ tab, choice })
+    if (modal.value) finishModal('cancel')
+    // Stopping sharing may apply a last remote edit or create a retained conflict copy.
+    // Review all of those documents together, after the service has stopped accepting edits.
+    await endSharing()
+    const unsaved = tabs.value.filter(dirty)
+    let discard = false
+    if (unsaved.length) {
+      const answer = await ask({
+        kind: 'close-all', title: '关闭全部文档？',
+        text: `有 ${unsaved.length} 份文档尚未保存到文件。“全部关闭”将放弃这些修改并移除对应的本地草稿；已保存的文件不受影响。`,
+        lines: unsaved.map(tab => tab.document.title),
+      })
+      if (answer === 'cancel') return
+      discard = answer === 'discard'
+      if (!discard) {
+        for (const tab of unsaved) if (!await save(tab) || dirty(tab)) return
       }
     }
-    closingWindow.value = true
-    for (const { tab, choice } of choices) {
-      if (choice === 'remove') await removeLocal(tab.document.id); else if (autoSaveEnabled.value) await persist(tab, true)
+    for (const tab of tabs.value) {
+      if (discard && dirty(tab)) {
+        const record = recent.value.find(item => item.id === tab.document.id)
+        if (record) removedDrafts.push(clone(record))
+        await removeLocal(tab.document.id)
+      } else if (autoSaveEnabled.value) await persist(tab, true)
     }
+    await Promise.all(queues.values())
     await closeNativeWindow()
     requested = true
   } catch (error) {
-    // A failed native close leaves this working session alive, including discarded tabs.
-    for (const { tab, choice } of choices) if (choice === 'remove') scheduleDraft(tab)
+    // Keep the complete working session and restore its drafts if the native exit fails.
+    for (const record of removedDrafts) {
+      try { await putDraft(record); updateRecent(record) }
+      catch (restoreError) { errorMessage(restoreError) }
+    }
+    if (autoSaveEnabled.value) for (const tab of tabs.value) scheduleDraft(tab)
     errorMessage(error)
   } finally { if (!requested) { closing = false; closingWindow.value = false } }
 }
@@ -460,7 +483,7 @@ function toggleSidebar() {
 }
 function date(value: string): string { return new Date(value).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function keyboard(event: KeyboardEvent) {
-  if (closingWindow.value) { event.preventDefault(); return }
+  if (closingWindow.value && !modal.value) { event.preventDefault(); return }
   if (event.key === 'Escape') { if (modal.value) { event.preventDefault(); finishModal('cancel') }; menu.value = null; return }
   if (!(event.ctrlKey || event.metaKey) || modal.value) return
   const key = event.key.toLowerCase()
@@ -480,6 +503,7 @@ function pageHide() { if (closingWindow.value) return; void editor.value?.flush(
 const media = typeof window === 'undefined' ? null : window.matchMedia('(prefers-color-scheme: dark)')
 function mediaChange() { systemDark.value = media?.matches || false }
 onMounted(async () => {
+  const closeListener = onNativeCloseRequest(() => void nativeClose()).catch(error => { errorMessage(error); return undefined })
   mediaChange(); media?.addEventListener('change', mediaChange)
   window.addEventListener('keydown', keyboard); window.addEventListener('beforeunload', unload); window.addEventListener('pagehide', pageHide)
   try {
@@ -498,7 +522,8 @@ onMounted(async () => {
     rememberSession()
   } catch (error) { errorMessage(new Error(`本地草稿不可用：${error instanceof Error ? error.message : String(error)}`)) }
   finally { booting.value = false }
-  try { unlisten = await onNativeCloseRequest(() => void nativeClose()) } catch (error) { errorMessage(error) }
+  unlisten = await closeListener
+  if (pendingWindowClose) { pendingWindowClose = false; void nativeClose() }
 })
 onBeforeUnmount(() => {
   sharingGeneration++; sharedSync?.stop()
@@ -510,7 +535,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell" :data-theme="effectiveTheme">
-    <header class="global-toolbar">
+    <header class="global-toolbar" :inert="closingWindow">
       <button class="brand" title="返回工作台" aria-label="返回工作台" @click="showHome"><img src="/brand-mark.png" width="30" height="30" alt=""><strong>Open Workflow</strong></button>
       <div class="file-actions">
         <button title="新建文档 (Ctrl+N)" :aria-expanded="menu === 'new'" @click="menu = menu === 'new' ? null : 'new'"><AppIcon name="plus"/><span>新建</span><AppIcon name="chevron" :size="12"/></button>
@@ -525,14 +550,14 @@ onBeforeUnmount(() => {
         <button class="icon-button" title="重做 (Ctrl+Shift+Z)" aria-label="重做" :disabled="home || !active?.history.canRedo" @click="historyAction('redo')"><AppIcon name="redo"/></button>
       </div>
       <div class="toolbar-end">
-        <button class="icon-button" title="切换外观" aria-label="切换外观" :aria-expanded="menu === 'theme'" @click="menu = menu === 'theme' ? null : 'theme'"><AppIcon :name="effectiveTheme === 'dark' ? 'moon' : 'sun'"/></button>
-        <button class="icon-button help-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
+        <HeaderControls :theme="theme" :effective-theme="effectiveTheme" :info-open="modal?.kind === 'info'" @update:theme="setTheme" @info="ask({ kind: 'info', title: '关于 Open Workflow', text: '' })"/>
+        <button class="icon-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
       </div>
     </header>
     <input id="file-input" ref="fileInput" type="file" :accept="fileAccept" multiple hidden @change="browserFiles">
 
     <div v-if="booting" class="boot-screen" role="status"><span class="spinner"></span>正在恢复本地工作区…</div>
-    <div v-else-if="home" class="home-layout" :class="{ collapsed }">
+    <div v-else-if="home" class="home-layout" :class="{ collapsed }" :inert="closingWindow">
       <aside class="home-sidebar">
         <div class="sidebar-heading"><span v-if="!collapsed">工作空间</span><button class="icon-button" :title="collapsed ? '展开侧栏' : '折叠侧栏'" :aria-label="collapsed ? '展开侧栏' : '折叠侧栏'" @click="toggleSidebar"><AppIcon name="panel"/></button></div>
         <nav aria-label="工作台导航">
@@ -568,12 +593,12 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </section>
-          <div class="home-footnote"><span>自由绘制，也可用文字构建图表</span><span>Open Workflow · 0.1.0</span></div>
+          <div class="home-footnote"><span>自由绘制，也可用文字构建图表</span><span>Open Workflow · {{ buildInfo.version }}</span></div>
         </div>
       </main>
     </div>
 
-    <main v-else-if="active" class="editor-layout">
+    <main v-else-if="active" class="editor-layout" :inert="closingWindow">
       <div class="document-tabs" role="tablist" aria-label="打开的文档">
         <button class="tab-home" title="返回工作台" aria-label="返回工作台" @click="showHome"><AppIcon name="home" :size="17"/></button>
         <div v-for="tab in tabs" :key="tab.document.id" class="tab-wrap" :class="{ active: activeId === tab.document.id }">
@@ -591,23 +616,23 @@ onBeforeUnmount(() => {
       </SceneEditor>
     </main>
 
-    <footer class="status-bar"><span class="status-info">{{ home ? '画布 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error', paused: !autoSaveEnabled }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : !autoSaveEnabled ? 'save' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
+    <footer class="status-bar" :inert="closingWindow"><span class="status-info">{{ home ? '画布 · 代码图表' : status }}</span><span v-if="busy" class="status-busy"><span class="spinner small"></span>{{ busy }}</span><button v-else class="save-status" :class="{ error: active?.draftState === 'error', paused: !autoSaveEnabled }" :title="activeSaveState" @click="active?.draftState === 'error' && persist(active)"><span v-if="active?.draftState === 'pending'" class="spinner small"></span><AppIcon v-else :name="active?.draftState === 'error' ? 'alert' : !autoSaveEnabled ? 'save' : 'check'" :size="13"/>{{ activeSaveState }}</button></footer>
 
     <template v-if="menu"><div class="menu-dismiss" @click="menu = null"></div><div class="popup-menu" :class="`menu-${menu}`" role="menu">
       <template v-if="menu === 'new'"><p>新建文档</p><button role="menuitem" @click="create('flow')"><AppIcon name="canvas"/>画布<small>流程、手绘与便签</small></button><button role="menuitem" @click="create('mermaid')"><AppIcon name="code"/>代码图表<small>文本绘图</small></button></template>
       <template v-else-if="menu === 'export'"><p>导出当前文档</p><button role="menuitem" @click="exportAs('svg')"><AppIcon name="export"/>SVG 矢量图</button><button role="menuitem" @click="exportAs('png')"><AppIcon name="export"/>PNG 图片</button><button role="menuitem" @click="exportAs('drawio')"><AppIcon name="flow"/>图形 XML<small>基础图形</small></button><button role="menuitem" @click="exportAs('excalidraw')"><AppIcon name="board"/>白板 JSON<small>基础元素</small></button><button v-if="active?.document.kind === 'mermaid'" role="menuitem" @click="exportAs('mmd')"><AppIcon name="code"/>图表源码</button><button v-if="active?.document.importSource" role="menuitem" @click="exportAs('original')"><AppIcon name="download"/>导入时的原文件</button></template>
-      <template v-else><p>外观</p><button v-for="option in [{ value: 'light', label: '浅色', icon: 'sun' }, { value: 'dark', label: '深色', icon: 'moon' }, { value: 'system', label: '跟随系统', icon: 'monitor' }]" :key="option.value" role="menuitemradio" :aria-checked="theme === option.value" @click="setTheme(option.value as 'light' | 'dark' | 'system')"><AppIcon :name="option.icon"/>{{ option.label }}<AppIcon v-if="theme === option.value" name="check" :size="16"/></button></template>
     </div></template>
 
     <div v-if="toast" class="toast" :class="{ error: toast.error }" :role="toast.error ? 'alert' : 'status'"><AppIcon :name="toast.error ? 'alert' : 'check'"/><span>{{ toast.text }}</span><button class="icon-button" title="关闭提示" aria-label="关闭提示" @click="toast = null"><AppIcon name="close" :size="16"/></button></div>
 
-    <div v-if="closingWindow" class="operation-overlay" role="status"><span class="spinner"></span>正在保存并关闭…</div>
+    <div v-if="closingWindow" class="operation-overlay" role="status"><span class="spinner"></span>正在检查并关闭…</div>
     <div v-if="modal" class="modal-backdrop" @keydown.esc.stop="finishModal('cancel')" @keydown="trapFocus">
       <section ref="modalPanel" class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><h2 id="modal-title">{{ modal.title }}</h2><button class="icon-button" title="关闭" aria-label="关闭对话框" @click="finishModal('cancel')"><AppIcon name="close"/></button></header><div class="modal-body">
+        <AppInformation v-if="modal.kind === 'info'"/>
         <p v-if="modal.text">{{ modal.text }}</p><input v-if="modal.kind === 'rename'" v-model="modal.value" class="rename-input" maxlength="200" aria-label="文档名称" @keydown.enter="finishModal('confirm')">
         <ul v-if="modal.lines" class="import-notes"><li v-for="(line, index) in modal.lines" :key="index">{{ line }}</li></ul>
         <template v-if="modal.kind === 'help'"><div class="help-block"><h3>画布</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>画布统一提供流程图形、四方向大括弧、六种笔触、整元素橡皮擦、分区框架和可编辑模板。笔触设置可调整颜色、粗细、不透明度、平滑和触笔压感；激光指示轨迹短暂显示，不加入文档。开启工具锁可连续绘制，Esc 退出；绘制前可设置连线类型和箭头。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>代码图表工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；移动源码光标会高亮对应图形或连线，也可点击“定位图形”将其移到可见区域。定位提示不进入导出。全局绘图风格提供 10 种预设，导出和可编辑副本保留同样的外观。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>顶部“自动保存”开关只控制本地草稿，默认开启并记住选择，不会自动写入原文件。关闭后可用 Ctrl+S 手动保存 .owflow 文件并同步草稿；重新开启会保存所有已打开文档的最新内容。图形 XML 和白板 JSON 支持基础元素导入，转换限制会单独提示。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
-      </div><footer><template v-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
+      </div><footer><template v-if="modal.kind === 'close-all'"><button class="danger-text" @click="finishModal('discard')">全部关闭</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并全部关闭</button></template><template v-else-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
     </div>
   </div>
 </template>

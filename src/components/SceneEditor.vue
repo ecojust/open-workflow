@@ -77,6 +77,9 @@ const tools: { id: Tool; label: string; icon: string; shortcut?: string }[] = [
   { id: 'diamond', label: '判断', icon: 'diamond', shortcut: 'D' }, { id: 'edge', label: '连线', icon: 'connector', shortcut: 'L' },
   { id: 'text', label: '文字', icon: 'text', shortcut: 'T' }, { id: 'note', label: '便签', icon: 'note', shortcut: 'N' }, { id: 'pen', label: '画笔', icon: 'pen', shortcut: 'P' }, { id: 'highlighter', label: '荧光笔', icon: 'highlighter', shortcut: 'M' }, { id: 'laser', label: '激光指示', icon: 'laser', shortcut: 'K' }, { id: 'eraser', label: '橡皮擦', icon: 'eraser', shortcut: 'E' }, { id: 'frame', label: '分区框架', icon: 'frame', shortcut: 'F' },
 ]
+const navigationTools = tools.filter(item => ['select', 'hand'].includes(item.id))
+const drawingTools = tools.filter(item => ['pen', 'highlighter', 'laser', 'eraser'].includes(item.id))
+const quickShapeTools = tools.filter(item => !navigationTools.includes(item) && !drawingTools.includes(item))
 const shapePalette: { shape: ShapeElement['shape']; text: string; icon: string }[] = [
   { shape: 'rectangle', text: '矩形', icon: 'rectangle' }, { shape: 'ellipse', text: '椭圆', icon: 'ellipse' }, { shape: 'diamond', text: '菱形', icon: 'diamond' },
   { shape: 'triangle', text: '三角形', icon: 'triangle' }, { shape: 'hexagon', text: '六边形', icon: 'hexagon' }, { shape: 'star', text: '星形', icon: 'star' },
@@ -461,20 +464,40 @@ onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laser
 <template>
   <section ref="editor" class="scene-editor" @keydown="keyDown" @input.capture="markControlDirty" @change.capture="clearControlDirty" data-testid="scene-editor">
     <div class="canvas-commandbar" @pointerdown.stop>
-      <div class="canvas-primary-tools"><div v-if="$slots.server" class="canvas-server-slot" data-testid="canvas-server-slot"><slot name="server" /></div><div class="toolset" role="toolbar" aria-label="画布工具">
-        <button aria-label="图形素材面板" title="图形素材" :aria-pressed="libraryOpen" @click="edgeDefaultsOpen = false; brushSettingsOpen = false; libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
-        <button v-for="item in tools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
-        <span class="tool-divider" />
-        <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()"><AppIcon name="image" :size="20" /></button>
-      </div></div>
-      <div class="commandbar-actions">
-        <button class="brush-settings-toggle" aria-label="笔触设置" :title="`笔触设置 · ${brushName}`" :aria-expanded="brushSettingsOpen" data-testid="brush-settings-toggle" @click="toggleBrushSettings"><AppIcon name="brushes" /></button>
-        <button class="tool-lock-toggle" aria-label="连续绘制" :title="toolLocked ? '连续绘制已开启 · Esc 返回选择' : '开启连续绘制'" :aria-pressed="toolLocked" data-testid="tool-lock" @click="toggleToolLock"><AppIcon :name="toolLocked ? 'lock' : 'unlock'" /></button>
-        <button aria-label="新建连线设置" :title="`新建连线 · ${defaultEdgeRoute === 'straight' ? '直线' : '折线'} · ${defaultEdgeArrow === 'none' ? '无箭头' : defaultEdgeArrow === 'both' ? '双箭头' : '单箭头'}`" :aria-expanded="edgeDefaultsOpen" data-testid="edge-defaults-toggle" @click="toggleEdgeDefaults"><AppIcon :name="defaultEdgeRoute === 'straight' ? 'edge-straight' : 'edge-orthogonal'" /></button>
-        <button aria-label="画布模板" title="画布模板" :aria-expanded="boardTemplatesOpen" @click="flush(); globalStyleOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; boardTemplatesOpen = !boardTemplatesOpen" data-testid="board-template-toggle"><AppIcon name="templates" /></button>
-        <button class="style-trigger" aria-label="全局线条风格" :title="`全局线条风格 · ${globalStyle.roughness === 'sketch' ? '手绘' : '整洁'}`" :aria-expanded="globalStyleOpen" @click="flush(); boardTemplatesOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; globalStyleOpen = !globalStyleOpen" data-testid="global-style-toggle"><AppIcon name="style" /><span class="style-trigger-label">全局线条<small>{{ globalStyle.roughness === 'sketch' ? '手绘' : '整洁' }}</small></span><AppIcon class="style-trigger-chevron" name="chevron" :size="12" /></button>
-        <button class="layout-trigger" @click="autoLayout" title="自动布局" aria-label="自动布局" data-testid="canvas-auto-layout"><AppIcon name="auto-layout" /><span>自动布局</span></button>
-        <button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板"><AppIcon name="sliders" /></button>
+      <div class="canvas-primary-tools">
+        <div class="canvas-toolgroup navigation-toolgroup">
+          <span class="toolgroup-label">选择与移动</span>
+          <div class="toolset" role="toolbar" aria-label="选择与移动">
+            <div v-if="$slots.server" class="canvas-server-slot" data-testid="canvas-server-slot"><slot name="server" /></div>
+            <button v-for="item in navigationTools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
+          </div>
+        </div>
+        <div class="canvas-toolgroup quick-shapes-group" data-testid="quick-shapes-group">
+          <span class="toolgroup-label">快捷图形</span>
+          <div class="toolset" role="toolbar" aria-label="快捷图形">
+            <button aria-label="图形素材面板" title="更多图形素材" :aria-pressed="libraryOpen" @click="edgeDefaultsOpen = false; brushSettingsOpen = false; libraryOpen = !libraryOpen"><AppIcon name="shapes" /></button>
+            <button v-for="item in quickShapeTools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
+            <button aria-label="插入图片" title="插入本地图片" @click="imageInput?.click()"><AppIcon name="image" :size="20" /></button>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-toolgroup drawing-toolgroup" data-testid="drawing-toolgroup">
+        <span class="toolgroup-label">自由绘制</span>
+        <div class="toolset" role="toolbar" aria-label="自由绘制">
+          <button class="brush-settings-toggle" aria-label="笔触设置" :title="`自定义笔触 · ${brushName}`" :aria-expanded="brushSettingsOpen" data-testid="brush-settings-toggle" @click="toggleBrushSettings"><AppIcon name="brushes" :size="20" /><span>自定义笔触</span></button>
+          <button v-for="item in drawingTools" :key="item.id" :aria-label="item.label" :title="`${item.label} (${item.shortcut})`" :aria-pressed="tool === item.id" :class="{ active: tool === item.id }" @click="setTool(item.id)" :data-testid="`tool-${item.id}`"><AppIcon :name="item.icon" :size="20" /></button>
+        </div>
+      </div>
+      <div class="canvas-toolgroup canvas-actions-group">
+        <span class="toolgroup-label">画布操作</span>
+        <div class="commandbar-actions" role="toolbar" aria-label="画布操作">
+          <button class="tool-lock-toggle" aria-label="连续绘制" :title="toolLocked ? '连续绘制已开启 · Esc 返回选择' : '开启连续绘制'" :aria-pressed="toolLocked" data-testid="tool-lock" @click="toggleToolLock"><AppIcon :name="toolLocked ? 'lock' : 'unlock'" /></button>
+          <button aria-label="新建连线设置" :title="`新建连线 · ${defaultEdgeRoute === 'straight' ? '直线' : '折线'} · ${defaultEdgeArrow === 'none' ? '无箭头' : defaultEdgeArrow === 'both' ? '双箭头' : '单箭头'}`" :aria-expanded="edgeDefaultsOpen" data-testid="edge-defaults-toggle" @click="toggleEdgeDefaults"><AppIcon :name="defaultEdgeRoute === 'straight' ? 'edge-straight' : 'edge-orthogonal'" /></button>
+          <button aria-label="画布模板" title="画布模板" :aria-expanded="boardTemplatesOpen" @click="flush(); globalStyleOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; boardTemplatesOpen = !boardTemplatesOpen" data-testid="board-template-toggle"><AppIcon name="templates" /></button>
+          <button class="style-trigger" aria-label="全局线条风格" :title="`全局线条风格 · ${globalStyle.roughness === 'sketch' ? '手绘' : '整洁'}`" :aria-expanded="globalStyleOpen" data-testid="global-style-toggle" @click="flush(); boardTemplatesOpen = false; edgeDefaultsOpen = false; brushSettingsOpen = false; globalStyleOpen = !globalStyleOpen"><AppIcon name="style" /><span class="style-trigger-label">全局线条<small>{{ globalStyle.roughness === 'sketch' ? '手绘' : '整洁' }}</small></span><AppIcon class="style-trigger-chevron" name="chevron" :size="12" /></button>
+          <button class="layout-trigger" @click="autoLayout" title="自动布局" aria-label="自动布局" data-testid="canvas-auto-layout"><AppIcon name="auto-layout" /><span>自动布局</span></button>
+          <button :aria-pressed="propertiesOpen" @click="propertiesOpen = !propertiesOpen" title="切换属性面板" aria-label="属性面板"><AppIcon name="sliders" /></button>
+        </div>
       </div>
       <div v-if="brushSettingsOpen" class="brush-settings-popover"><BrushPanel :settings="brushSettings" @choose="chooseBrush" @change="updateBrushSettings" @close="brushSettingsOpen = false; focusStage()" @start="setTool(brushSettings.kind === 'highlighter' ? 'highlighter' : 'pen')" /></div>
       <div v-if="edgeDefaultsOpen" class="edge-defaults-panel" role="region" aria-label="新建连线设置" data-testid="edge-defaults-panel" @keydown.escape.stop="edgeDefaultsOpen = false; focusStage()">
@@ -549,4 +572,16 @@ onBeforeUnmount(() => { if (laserFrame !== undefined) cancelAnimationFrame(laser
 @media(max-width:1100px){.commandbar-actions .layout-trigger{width:33px;padding:0}.layout-trigger>span{display:none}}
 @media(max-width:540px){.canvas-primary-tools{width:100%}.canvas-commandbar{height:auto;min-height:0;flex-direction:column;align-items:stretch;gap:4px}.toolset{width:100%;min-height:34px}.commandbar-actions{justify-content:flex-end;gap:3px}.commandbar-actions .layout-trigger{width:30px}.shape-library,.properties-panel{margin-top:110px}.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 220px);overflow:auto}}
 .brush-settings-popover{position:absolute;right:0;top:calc(100% + 8px);z-index:12}.laser-trail{filter:drop-shadow(0 0 5px #ff4d6577)}
+/* Keep shape shortcuts and freehand tools in separate, named surfaces. */
+.canvas-commandbar,.board-mode .canvas-commandbar{height:auto;min-height:0;align-items:stretch;padding:0;gap:8px;border:0;border-radius:0;background:transparent;box-shadow:none;width:max-content}
+.canvas-primary-tools{align-items:stretch;gap:8px;flex:1;min-width:150px}
+.canvas-toolgroup{min-width:0;padding:6px;box-sizing:border-box;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-surface);box-shadow:0 4px 18px #202c4510}
+.toolgroup-label{display:block;padding:0 5px 4px;font-size:10px;line-height:14px;font-weight:600;color:var(--ui-muted);white-space:nowrap}
+.navigation-toolgroup{flex:none}.quick-shapes-group{flex:1;min-width:0}.drawing-toolgroup,.canvas-actions-group{flex:none}
+.canvas-primary-tools .toolset{flex:none}.toolset,.commandbar-actions{gap:2px}.toolset button,.commandbar-actions button{width:31px;min-width:31px;height:32px}.toolset button[aria-expanded=true],.toolset button[aria-pressed=true]{color:var(--ui-accent);background:var(--ui-soft);border-color:var(--ui-line)}
+.toolset .brush-settings-toggle{display:flex;align-items:center;justify-content:center;gap:5px;width:auto;padding:0 7px;margin-right:3px;border-color:var(--ui-line);background:var(--ui-bg);font-size:11px;white-space:nowrap}.brush-settings-toggle span{line-height:1.2}
+.shape-library,.properties-panel{margin-top:94px}
+@media(max-width:1280px){.commandbar-actions .style-trigger,.commandbar-actions .layout-trigger{width:31px;padding:0;justify-content:center}.style-trigger-label,.style-trigger-chevron,.layout-trigger>span{display:none}}
+@media(max-width:900px){.canvas-commandbar,.board-mode .canvas-commandbar{position:relative;left:auto;right:auto;top:auto;transform:none;flex-wrap:wrap;justify-content:flex-start;gap:6px;width:auto;max-width:none;margin:10px 12px;flex:none}.canvas-primary-tools{flex-basis:100%;width:100%;min-width:0;gap:6px}.drawing-toolgroup{flex:1;min-width:0}.canvas-actions-group{flex:none}.canvas-commandbar .commandbar-actions{justify-content:flex-start;gap:2px;overflow-x:auto;scrollbar-width:none}.canvas-commandbar .commandbar-actions button{flex:none}.shape-library,.properties-panel{margin-top:12px}.properties-panel{position:absolute;right:0;top:0;bottom:0;z-index:8}.shape-library{display:block;position:absolute;left:0;top:0;bottom:0;z-index:8}.toolset{width:auto;min-height:0}.brush-panel,.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 340px);overflow:auto}}
+@media(max-width:540px){.canvas-commandbar,.board-mode .canvas-commandbar{flex-direction:row;align-items:stretch;margin:8px}.canvas-toolgroup{padding:4px}.canvas-primary-tools{min-width:0}.navigation-toolgroup .toolgroup-label{font-size:9px;padding-left:2px}.drawing-toolgroup{flex-basis:100%}.canvas-actions-group{flex-basis:100%}.canvas-actions-group .toolgroup-label{display:none}.canvas-commandbar .commandbar-actions{justify-content:center}.canvas-commandbar .commandbar-actions .layout-trigger,.canvas-commandbar .commandbar-actions .style-trigger{width:31px}.brush-settings-popover{right:0;left:auto}.shape-library,.properties-panel{margin-top:10px}.canvas-commandbar .global-style-panel,.canvas-commandbar .edge-defaults-panel{max-height:calc(100dvh - 360px)}}
 </style>

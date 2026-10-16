@@ -429,8 +429,7 @@ async function main() {
     await expect(page.locator('.save-status')).toContainText('文件版本一致')
   })
   await test('dark-theme-persists', async page => {
-    await page.getByRole('button', { name: '切换外观', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: '深色', exact: true }).click()
+    await page.getByRole('button', { name: '深色主题', exact: true }).click()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-theme', 'dark')
     await page.reload()
     await expect(page.locator('.app-shell')).toHaveAttribute('data-theme', 'dark')

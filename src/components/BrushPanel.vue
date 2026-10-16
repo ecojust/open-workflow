@@ -22,7 +22,7 @@ function numeric(event: Event, key: 'width' | 'opacity' | 'smoothing', min: numb
 
 <template>
   <section class="brush-panel" role="region" aria-label="笔触设置" data-testid="brush-settings-panel" @keydown.escape.stop="emit('close')">
-    <div class="brush-heading"><strong>笔触</strong><span>用于接下来绘制的笔迹</span><button aria-label="关闭笔触设置" @click="emit('close')"><AppIcon name="close" :size="16" /></button></div>
+    <div class="brush-heading"><strong>自定义笔触</strong><span>用于接下来绘制的笔迹</span><button aria-label="关闭笔触设置" @click="emit('close')"><AppIcon name="close" :size="16" /></button></div>
     <div class="brush-presets" role="group" aria-label="笔触类型">
       <button v-for="preset in BRUSH_PRESETS" :key="preset.id" :aria-pressed="settings.kind === preset.id" :data-testid="`brush-${preset.id}`" @click="emit('choose', preset.id)"><svg viewBox="0 0 64 28" aria-hidden="true" v-html="preview(preset.id, preset.width)" /><span>{{ preset.label }}</span></button>
     </div>

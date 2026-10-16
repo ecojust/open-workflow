@@ -215,13 +215,11 @@ mod desktop {
 
     #[tauri::command]
     pub fn close_native_window(
-        window: tauri::WebviewWindow,
+        app: tauri::AppHandle,
         state: State<'_, Closing>,
     ) -> Result<(), String> {
-        state.0.store(true, Ordering::Release);
-        if let Err(error) = window.close() {
-            state.0.store(false, Ordering::Release);
-            return Err(format!("无法关闭窗口：{error}"));
+        if !state.0.swap(true, Ordering::AcqRel) {
+            app.exit(0);
         }
         Ok(())
     }
@@ -252,13 +250,20 @@ mod desktop {
             })
             .build(tauri::generate_context!())
             .expect("启动 Open Workflow 失败")
-            .run(|app, event| {
-                if matches!(event, tauri::RunEvent::Exit) {
+            .run(|app, event| match event {
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !app.state::<Closing>().0.load(Ordering::Acquire) {
+                        api.prevent_exit();
+                        let _ = app.emit("native-close-requested", ());
+                    }
+                }
+                tauri::RunEvent::Exit => {
                     let state = app.state::<ServerState>();
                     if let Ok(mut server) = state.0.lock() {
                         server.stop_all();
                     };
                 }
+                _ => {}
             });
     }
 }
