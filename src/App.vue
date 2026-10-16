@@ -24,7 +24,7 @@ interface Tab {
   path?: string; stamp?: string; revision: number; draftRevision: number
   draftState: 'pending' | 'saved' | 'paused' | 'error'; lastOpened: number
 }
-type ModalKind = 'unsaved' | 'close-all' | 'rename' | 'notice' | 'delete' | 'help' | 'info'
+type ModalKind = 'unsaved' | 'close-all' | 'rename' | 'notice' | 'delete' | 'info'
 interface Modal { kind: ModalKind; title: string; text: string; lines?: string[]; value?: string }
 const tabs = ref<Tab[]>([])
 const activeId = ref('')
@@ -45,7 +45,6 @@ const editor = ref<EditorHandle>()
 const native = isDesktop()
 const theme = ref<'light' | 'dark' | 'system'>('system')
 const systemDark = ref(false)
-const collapsed = ref(false)
 const autoSaveEnabled = ref(true)
 const serverStatus = ref<ServerStatus>({ running: false, urls: [] })
 const serverBusy = ref(false)
@@ -374,7 +373,7 @@ function finishModal(answer: string) {
 }
 function trapFocus(event: KeyboardEvent) {
   if (event.key !== 'Tab') return
-  const items = [...(modalPanel.value?.querySelectorAll<HTMLElement>('button:not([disabled]),input,textarea,a[href]') || [])]
+  const items = [...(modalPanel.value?.querySelectorAll<HTMLElement>('button:not([disabled]),input,textarea,a[href],summary') || [])]
   const first = items[0], last = items[items.length - 1]
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
@@ -477,10 +476,6 @@ function setTheme(value: 'light' | 'dark' | 'system') {
   theme.value = value; menu.value = null
   try { localStorage.setItem('ow-theme', value) } catch { /* Not essential to saving documents. */ }
 }
-function toggleSidebar() {
-  collapsed.value = !collapsed.value
-  try { localStorage.setItem('ow-sidebar', String(collapsed.value)) } catch { /* Optional preference. */ }
-}
 function date(value: string): string { return new Date(value).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function keyboard(event: KeyboardEvent) {
   if (closingWindow.value && !modal.value) { event.preventDefault(); return }
@@ -508,7 +503,6 @@ onMounted(async () => {
   window.addEventListener('keydown', keyboard); window.addEventListener('beforeunload', unload); window.addEventListener('pagehide', pageHide)
   try {
     const savedTheme = localStorage.getItem('ow-theme'); if (['light', 'dark', 'system'].includes(savedTheme || '')) theme.value = savedTheme as typeof theme.value
-    collapsed.value = localStorage.getItem('ow-sidebar') === 'true'
     autoSaveEnabled.value = localStorage.getItem('ow-autosave') !== 'false'
     const result = await readDrafts(); recent.value = result.records
     if (result.skipped) message(`${result.skipped} 份损坏的草稿未能恢复；原始数据仍在本地。`, true)
@@ -551,15 +545,14 @@ onBeforeUnmount(() => {
       </div>
       <div class="toolbar-end">
         <HeaderControls :theme="theme" :effective-theme="effectiveTheme" :info-open="modal?.kind === 'info'" @update:theme="setTheme" @info="ask({ kind: 'info', title: '关于 Open Workflow', text: '' })"/>
-        <button class="icon-button" title="使用帮助" aria-label="使用帮助" @click="ask({ kind: 'help', title: '开始创作', text: '' })"><AppIcon name="help"/></button>
       </div>
     </header>
     <input id="file-input" ref="fileInput" type="file" :accept="fileAccept" multiple hidden @change="browserFiles">
 
     <div v-if="booting" class="boot-screen" role="status"><span class="spinner"></span>正在恢复本地工作区…</div>
-    <div v-else-if="home" class="home-layout" :class="{ collapsed }" :inert="closingWindow">
+    <div v-else-if="home" class="home-layout" :inert="closingWindow">
       <aside class="home-sidebar">
-        <div class="sidebar-heading"><span v-if="!collapsed">工作空间</span><button class="icon-button" :title="collapsed ? '展开侧栏' : '折叠侧栏'" :aria-label="collapsed ? '展开侧栏' : '折叠侧栏'" @click="toggleSidebar"><AppIcon name="panel"/></button></div>
+        <div class="sidebar-heading"><span>工作空间</span></div>
         <nav aria-label="工作台导航">
           <button :class="{ selected: section === 'home' }" title="工作台" @click="section = 'home'"><AppIcon name="home"/><span>工作台</span></button>
           <button :class="{ selected: section === 'recent' }" title="最近文档" @click="section = 'recent'"><AppIcon name="clock"/><span>最近文档</span><small>{{ recent.length }}</small></button>
@@ -631,7 +624,6 @@ onBeforeUnmount(() => {
         <AppInformation v-if="modal.kind === 'info'"/>
         <p v-if="modal.text">{{ modal.text }}</p><input v-if="modal.kind === 'rename'" v-model="modal.value" class="rename-input" maxlength="200" aria-label="文档名称" @keydown.enter="finishModal('confirm')">
         <ul v-if="modal.lines" class="import-notes"><li v-for="(line, index) in modal.lines" :key="index">{{ line }}</li></ul>
-        <template v-if="modal.kind === 'help'"><div class="help-block"><h3>画布</h3><p>从工具栏选图形后点击画布放置。双击图形编辑文字，用连线工具连接节点。按住空格拖动画布，普通滚轮平移，Ctrl / ⌘ + 滚轮缩放，Shift 点击多选。</p><p>画布统一提供流程图形、四方向大括弧、六种笔触、整元素橡皮擦、分区框架和可编辑模板。笔触设置可调整颜色、粗细、不透明度、平滑和触笔压感；激光指示轨迹短暂显示，不加入文档。开启工具锁可连续绘制，Esc 退出；绘制前可设置连线类型和箭头。多选后可组合、对齐和等距分布；点击组合整体选择，Alt + 点击选择单个成员。拖动框架标题可带动内部内容。</p></div><div class="help-block"><h3>文字绘图</h3><p>代码图表工作区提供流程、时序、类图、ER、状态、架构、数据分析与项目计划等丰富的图表模板。选择模板后编辑源码，即时查看预览；移动源码光标会高亮对应图形或连线，也可点击“定位图形”将其移到可见区域。定位提示不进入导出。全局绘图风格提供 10 种预设，导出和可编辑副本保留同样的外观。各类型支持常用语法子集，未实现的指令会提示具体行号。</p></div><div class="help-block"><h3>保存与兼容</h3><p>顶部“自动保存”开关只控制本地草稿，默认开启并记住选择，不会自动写入原文件。关闭后可用 Ctrl+S 手动保存 .owflow 文件并同步草稿；重新开启会保存所有已打开文档的最新内容。图形 XML 和白板 JSON 支持基础元素导入，转换限制会单独提示。</p></div><div class="shortcuts"><span>打开文件 <kbd>Ctrl / ⌘ O</kbd></span><span>保存文件 <kbd>Ctrl / ⌘ S</kbd></span><span>撤销 <kbd>Ctrl / ⌘ Z</kbd></span><span>重做 <kbd>Ctrl / ⌘ Shift Z</kbd></span></div></template>
       </div><footer><template v-if="modal.kind === 'close-all'"><button class="danger-text" @click="finishModal('discard')">全部关闭</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并全部关闭</button></template><template v-else-if="modal.kind === 'unsaved'"><button class="danger-text" @click="finishModal('discard')">放弃修改</button><span class="spacer"></span><button class="secondary" @click="finishModal('cancel')">取消</button><button class="primary" @click="finishModal('save')">保存并关闭</button></template><template v-else-if="modal.kind === 'rename' || modal.kind === 'delete'"><button class="secondary" @click="finishModal('cancel')">取消</button><button :class="modal.kind === 'delete' ? 'danger' : 'primary'" :disabled="modal.kind === 'rename' && !modal.value?.trim()" @click="finishModal('confirm')">{{ modal.kind === 'delete' ? '移除草稿' : '确定' }}</button></template><button v-else class="primary" @click="finishModal('confirm')">知道了</button></footer></section>
     </div>
   </div>
