@@ -1,5 +1,10 @@
 # Open Workflow
 
+> [!IMPORTANT]
+> **停止维护说明**
+>
+> Open Workflow 的功能已集成到 Open Office，本项目后续不再维护。如有需要，请移步 [Open Office](https://github.com/ecojust/open-office)。
+
 把流程图、自由白板与代码图表放在同一个本地工作台。
 
 Open Workflow 提供“画布”和“代码图表”两个入口。流程绘制与自由白板共用画布，可从空白开始，也可插入模板。场景模型、SVG 绘制、节点连线、手绘、布局、撤销历史与格式转换均由本项目实现。自研设计结论见 [RESEARCH.md](docs/RESEARCH.md)，依赖归属和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
