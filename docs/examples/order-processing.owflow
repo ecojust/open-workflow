@@ -1,0 +1,27 @@
+{
+  "format": "open-workflow",
+  "version": 1,
+  "id": "doc-a3b9ae33-7b1b-4993-8cb8-6b7d7dc5710d",
+  "title": "订单处理与嵌套分支",
+  "kind": "mermaid",
+  "scene": {
+    "elements": [],
+    "background": "#ffffff",
+    "grid": true,
+    "defaultStyle": {
+      "stroke": "#334155",
+      "fill": "#ffffff",
+      "strokeWidth": 2,
+      "fontSize": 16,
+      "textAlign": "center",
+      "opacity": 1,
+      "dashed": false,
+      "strokePattern": "solid",
+      "roughness": "clean"
+    }
+  },
+  "source": "sequenceDiagram\ntitle 订单创建与状态反馈\n%% actor 用人物符号；participant 用服务卡片，as 设置显示别名。\nactor User as 用户\nparticipant App as 业务服务\nparticipant Data as 数据服务\nparticipant Notify as 通知服务\nautonumber 10 10\n%% 消息中的 + 开始目标激活区，返回消息中的 - 结束发送方激活区。\nUser->>+App: 提交订单\nNote over User,App: 多行说明<br/>先校验，再持久化\n%% rect 设置安全背景色；循环内部再放条件分支和可选步骤。\nrect rgb(239,246,255)\n  loop 最多重试三次\n    App->>+Data: 查询库存\n    Data-->>-App: 返回库存结果\n    alt 库存充足\n      App->>Data: 保存订单\n      Data-->>App: 确认写入\n      opt 用户订阅通知\n        App-)Notify: 发送异步通知\n        Note right of Notify: 后台完成推送\n      end\n    else 库存不足\n      App->>App: 记录失败原因\n      App-->>User: 返回调整建议\n    end\n  end\nend\nApp-->>-User: 返回处理状态",
+  "diagramStyle": "classic",
+  "createdAt": "2026-10-17T08:25:01.837Z",
+  "updatedAt": "2026-10-17T08:25:01.837Z"
+}

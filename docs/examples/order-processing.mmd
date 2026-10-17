@@ -1,0 +1,30 @@
+sequenceDiagram
+title 订单创建与状态反馈
+%% actor 用人物符号；participant 用服务卡片，as 设置显示别名。
+actor User as 用户
+participant App as 业务服务
+participant Data as 数据服务
+participant Notify as 通知服务
+autonumber 10 10
+%% 消息中的 + 开始目标激活区，返回消息中的 - 结束发送方激活区。
+User->>+App: 提交订单
+Note over User,App: 多行说明<br/>先校验，再持久化
+%% rect 设置安全背景色；循环内部再放条件分支和可选步骤。
+rect rgb(239,246,255)
+  loop 最多重试三次
+    App->>+Data: 查询库存
+    Data-->>-App: 返回库存结果
+    alt 库存充足
+      App->>Data: 保存订单
+      Data-->>App: 确认写入
+      opt 用户订阅通知
+        App-)Notify: 发送异步通知
+        Note right of Notify: 后台完成推送
+      end
+    else 库存不足
+      App->>App: 记录失败原因
+      App-->>User: 返回调整建议
+    end
+  end
+end
+App-->>-User: 返回处理状态
