@@ -1,6 +1,4 @@
-<p><img src="public/brand-mark.png" alt="Open Workflow 龙形应用 Logo" width="112" height="112"></p>
-
-# Open Workflow
+<h1 align="center"><img src="public/brand-mark.png" alt="Open Workflow 龙形应用 Logo" width="64" height="64" align="middle">&nbsp;Open Workflow</h1>
 
 > [!IMPORTANT]
 > **停止维护说明**
